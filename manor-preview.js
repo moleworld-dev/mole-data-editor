@@ -53,6 +53,8 @@
     objectInfo: new Map(),
     frameByName: new Map(),
     textureCache: new Map(),
+    texturePromises: new Map(),
+    textureFailures: new Set(),
     atlasSizes: new Map(),
     gl: null,
     programs: null,
@@ -86,6 +88,7 @@
       onDelete: null,
     },
     needsFit: true,
+    drawSerial: 0,
   };
 
   function text(value, fallback = "") {
@@ -587,21 +590,34 @@
   }
 
   async function textureFor(src) {
+    if (state.textureFailures.has(src)) throw new Error(`Texture failed: ${src}`);
     if (state.textureCache.has(src)) return state.textureCache.get(src);
-    const image = await loadImage(src);
-    const gl = state.gl;
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-    const item = { texture, width: image.naturalWidth, height: image.naturalHeight };
-    state.textureCache.set(src, item);
-    state.atlasSizes.set(src, { width: item.width, height: item.height });
-    return item;
+    if (state.texturePromises.has(src)) return state.texturePromises.get(src);
+    const promise = (async () => {
+      const image = await loadImage(src);
+      const gl = state.gl;
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+      const item = { texture, width: image.naturalWidth, height: image.naturalHeight };
+      state.textureCache.set(src, item);
+      state.atlasSizes.set(src, { width: item.width, height: item.height });
+      return item;
+    })();
+    state.texturePromises.set(src, promise);
+    try {
+      return await promise;
+    } catch (error) {
+      state.textureFailures.add(src);
+      throw error;
+    } finally {
+      state.texturePromises.delete(src);
+    }
   }
 
   function pushVertex(out, x, y, u, v, color) {
@@ -751,11 +767,33 @@
     gl.drawArrays(mode, 0, count);
   }
 
+  function addTextureSource(sources, asset) {
+    if (asset?.src) sources.add(asset.src);
+  }
+
+  function drawTextureSources() {
+    const sources = new Set();
+    if (state.showMap) {
+      for (const sprite of state.backgroundSprites) addTextureSource(sources, sprite.asset);
+    }
+    for (const sprite of state.sprites) addTextureSource(sources, sprite.asset);
+    for (const button of state.uiButtons) addTextureSource(sources, button.asset);
+    return Array.from(sources);
+  }
+
+  async function preloadDrawTextures() {
+    await Promise.all(drawTextureSources().map((src) => textureFor(src).catch(() => null)));
+  }
+
   async function draw() {
+    const drawSerial = ++state.drawSerial;
     if (!state.gl) return;
     resizeCanvas();
     if (state.needsFit) fit();
     clampPan();
+    updateUiButtons();
+    await preloadDrawTextures();
+    if (drawSerial !== state.drawSerial) return;
     const gl = state.gl;
     if (state.showMap) {
       gl.clearColor(MAP_GROUND_COLOR[0], MAP_GROUND_COLOR[1], MAP_GROUND_COLOR[2], MAP_GROUND_COLOR[3]);
@@ -821,7 +859,6 @@
         drawBuffer(state.programs.color, state.buffers.color, data, gl.TRIANGLES, 6);
       }
     }
-    updateUiButtons();
     await drawUiButtons();
   }
 
