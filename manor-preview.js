@@ -13,12 +13,15 @@
   const MAP_INIT_HEIGHT = 795;
   const MAP_INITIAL_VIEW_X = 0;
   const MAP_INITIAL_VIEW_Y = 0;
-  const MAP_WIDTH = 5580;
-  const MAP_GROUND_X = -1080;
   const MAP_GROUND_Y = -1110;
-  const MAP_GROUND_WIDTH = MAP_WIDTH + 2160;
   const MAP_GROUND_HEIGHT = MAP_HEIGHT * 3;
-  const MAP_GROUND_COLOR = [0.255, 0.62, 0.205, 1];
+  const MAP_GROUND_COLOR = [74 / 255, 166 / 255, 57 / 255, 1];
+  const MAP_LEFT_SEA_X = -1080;
+  const MAP_LEFT_SEA_WIDTH = 250;
+  const MAP_LEFT_BEACH_X = -830;
+  const MAP_LEFT_BEACH_WIDTH = 725;
+  const MAP_LEFT_SEA_COLOR = [83 / 255, 175 / 255, 203 / 255, 1];
+  const MAP_LEFT_BEACH_COLOR = [227 / 255, 208 / 255, 146 / 255, 1];
   const BACKGROUND_LAYER_X = 0;
   const BACKGROUND_LAYER_Y = 0;
   const PROPERTY_TABLES = new Set(["property", "propertyHV"]);
@@ -583,6 +586,16 @@
     return out;
   }
 
+  function groundLayerVertices() {
+    const out = [];
+    // Matches VillageLayer setBkg: green clear color, then left sea and beach CCLayerColor strips.
+    out.push(
+      ...rectVertices(MAP_LEFT_SEA_X, MAP_GROUND_Y, MAP_LEFT_SEA_WIDTH, MAP_GROUND_HEIGHT, MAP_LEFT_SEA_COLOR),
+      ...rectVertices(MAP_LEFT_BEACH_X, MAP_GROUND_Y, MAP_LEFT_BEACH_WIDTH, MAP_GROUND_HEIGHT, MAP_LEFT_BEACH_COLOR),
+    );
+    return out;
+  }
+
   function lineVertices(lines) {
     const out = [];
     const color = [0.15, 0.38, 0.34, 0.17];
@@ -628,14 +641,18 @@
     }
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    if (state.showMap && state.backgroundSprites.length) {
+    if (state.showMap) {
+      const groundData = groundLayerVertices();
       drawBuffer(
         state.programs.color,
         state.buffers.color,
-        rectVertices(MAP_GROUND_X, MAP_GROUND_Y, MAP_GROUND_WIDTH, MAP_GROUND_HEIGHT, MAP_GROUND_COLOR),
+        groundData,
         gl.TRIANGLES,
-        6,
+        groundData.length / 8,
       );
+    }
+
+    if (state.showMap && state.backgroundSprites.length) {
       for (const sprite of state.backgroundSprites) {
         try {
           const texture = await textureFor(sprite.asset.src);
