@@ -308,25 +308,29 @@
         timedFrames.push({
           frame,
           duration: Math.max(1, num(aframe.time, 1)) * ASPRITE_TIME_UNIT_MS,
+          ox: num(aframe.ox, 0),
+          oy: num(aframe.oy, 0),
         });
       }
     }
 
     if (!timedFrames.length) {
-      for (const frame of frames) timedFrames.push({ frame, duration: ASPRITE_TIME_UNIT_MS });
+      for (const frame of frames) timedFrames.push({ frame, duration: ASPRITE_TIME_UNIT_MS, ox: 0, oy: 0 });
     }
 
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
+    let minX = 0;
+    let minY = 0;
+    let maxX = 0;
+    let maxY = 0;
     for (const item of timedFrames) {
       const rect = item.frame.rect;
       const bounds = item.frame.bounds || { x: 0, y: 0, w: rect.w, h: rect.h };
-      minX = Math.min(minX, num(bounds.x, 0));
-      minY = Math.min(minY, num(bounds.y, 0));
-      maxX = Math.max(maxX, num(bounds.x, 0) + num(bounds.w, rect.w));
-      maxY = Math.max(maxY, num(bounds.y, 0) + num(bounds.h, rect.h));
+      const x = num(item.ox, 0) + num(bounds.x, 0);
+      const y = num(item.oy, 0) + num(bounds.y, 0);
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + num(bounds.w, rect.w));
+      maxY = Math.max(maxY, y + num(bounds.h, rect.h));
     }
     if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return null;
 
@@ -334,12 +338,14 @@
     const sequence = timedFrames.map((item) => {
       const rect = item.frame.rect;
       const bounds = item.frame.bounds || { x: 0, y: 0, w: rect.w, h: rect.h };
+      const x = num(item.ox, 0) + num(bounds.x, 0);
+      const y = num(item.oy, 0) + num(bounds.y, 0);
       const out = {
         at,
         duration: item.duration,
         trim: {
-          x: num(bounds.x, 0) - minX,
-          y: num(bounds.y, 0) - minY,
+          x: x - minX,
+          y: y - minY,
           width: num(rect.w, 0),
           height: num(rect.h, 0),
         },
@@ -358,6 +364,10 @@
       duration: Math.max(ASPRITE_TIME_UNIT_MS, at),
       width: maxX - minX,
       height: maxY - minY,
+      origin: {
+        x: -minX,
+        y: -minY,
+      },
     };
   }
 
@@ -391,6 +401,7 @@
       trim: first.trim,
       frame: first.frame,
       animation,
+      origin: animation.origin,
       aspritePreview: true,
     };
   }
@@ -481,6 +492,12 @@
   }
 
   function anchorFor(info, flip, asset) {
+    if (asset?.origin && asset.width > 0 && asset.height > 0) {
+      return {
+        x: num(asset.origin.x, asset.width * 0.5) / asset.width,
+        y: 1 - num(asset.origin.y, asset.height) / asset.height,
+      };
+    }
     const raw = info?.raw || {};
     const restPlace = text(raw.rest_place);
     const lengthX = Math.max(1, num(raw.length_x, 1));
