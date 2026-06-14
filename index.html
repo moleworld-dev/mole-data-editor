@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoleDataEditor</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="toolbar">
+        <div>
+          <h1>MoleDataEditor</h1>
+          <p>本地存档编辑器，文件只在浏览器里读取和导出。</p>
+        </div>
+        <div class="toolbar-actions">
+          <label class="file-button">
+            <input id="fileInput" type="file" accept=".json,.dat,application/json" multiple />
+            选择存档
+          </label>
+          <label class="file-button">
+            <input id="folderInput" type="file" webkitdirectory directory multiple />
+            选择目录
+          </label>
+          <button id="sampleBtn" type="button">载入示例</button>
+          <button id="downloadBtn" type="button" disabled>下载修改版</button>
+        </div>
+      </section>
+
+      <section id="editorShell" class="editor-shell">
+        <aside class="sidebar">
+          <div class="file-summary">
+            <span id="fileName">未载入文件</span>
+            <strong id="saveTitle">-</strong>
+            <small id="saveMeta">-</small>
+          </div>
+          <span id="importStatus" class="import-status">可拖入存档文件，或使用上方按钮选择。</span>
+          <nav class="tabs" aria-label="编辑区域">
+            <button class="tab active" type="button" data-tab="overview">概览</button>
+            <button class="tab" type="button" data-tab="user">玩家数值</button>
+            <button class="tab" type="button" data-tab="objects">摆放对象</button>
+            <button class="tab" type="button" data-tab="raw">原始 JSON</button>
+          </nav>
+          <div id="validationBox" class="validation-box"></div>
+        </aside>
+
+        <div class="workbench">
+          <section id="tab-overview" class="tab-panel active">
+            <div class="stats-grid" id="statsGrid"></div>
+            <div class="map-panel">
+              <div class="panel-head">
+              <div>
+                <h2>庄园对象图</h2>
+                <p>圆点来自 `objects[].enc_mapdata_b64` 的坐标头；地图整图 blob 默认原样保留。</p>
+              </div>
+                <div class="legend">
+                  <span><i class="dot map"></i>地图摆放</span>
+                  <span><i class="dot storage"></i>仓库/背包</span>
+                </div>
+              </div>
+              <div class="map-canvas-wrap">
+                <svg id="objectMap" role="img" aria-label="庄园对象坐标图"></svg>
+              </div>
+            </div>
+          </section>
+
+          <section id="tab-user" class="tab-panel">
+            <form id="userForm" class="form-grid">
+              <label>米米号<input name="user_id" type="number" step="1" /></label>
+              <label>昵称<input name="name" maxlength="31" /></label>
+              <label>等级<input name="cur_level" type="number" min="1" max="52" step="1" /></label>
+              <label>经验<input name="xp" type="number" min="0" step="1" /></label>
+              <label>摩尔豆<input name="gold" type="number" min="0" step="1" /></label>
+              <label>贝壳<input name="vip_gold" type="number" min="0" step="1" /></label>
+              <label>VIP 等级<input name="vip_level" type="number" min="0" step="1" /></label>
+              <label>头像索引<input name="icon_index" type="number" min="0" max="61" step="1" /></label>
+              <label>工人数<input name="total_workers" type="number" min="0" step="1" /></label>
+              <label>房间数<input name="total_rooms" type="number" min="0" step="1" /></label>
+            </form>
+
+            <div class="blob-tools">
+              <div>
+                <h2>地图整图 blob</h2>
+                <p id="mapBlobInfo">-</p>
+              </div>
+              <div class="segmented">
+                <button id="keepMapBtn" type="button" class="active">保留</button>
+                <button id="clearMapBtn" type="button">清空</button>
+              </div>
+            </div>
+          </section>
+
+          <section id="tab-objects" class="tab-panel">
+            <div class="panel-head compact">
+              <div>
+                <h2>对象表</h2>
+                <p>可编辑 `obj_id`、`scene_id`、`obj_kind`、坐标和翻转；改坐标会同步改写 `enc_mapdata_b64` 前 9 字节。</p>
+              </div>
+              <button id="addObjectBtn" type="button">新增对象</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>kind</th>
+                    <th>scene</th>
+                    <th>key</th>
+                    <th>obj</th>
+                    <th>seq</th>
+                    <th>x</th>
+                    <th>y</th>
+                    <th>flip</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="objectsTable"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="tab-raw" class="tab-panel">
+            <div class="panel-head compact">
+              <div>
+                <h2>原始 JSON</h2>
+                <p>适合编辑表单未覆盖的字段。离开此页前会尝试解析并同步到表单。</p>
+              </div>
+              <button id="formatJsonBtn" type="button">格式化</button>
+            </div>
+            <textarea id="jsonEditor" spellcheck="false"></textarea>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="./dat-parser.js" charset="UTF-8"></script>
+    <script src="./app.js" charset="UTF-8"></script>
+  </body>
+</html>
