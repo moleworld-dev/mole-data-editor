@@ -3,6 +3,8 @@
 (() => {
   const DAT_KEY = new TextEncoder().encode("39653543fa0d66aa");
   const APPLE_EPOCH_UNIX_MS = 978307200000;
+  const DAT_FOOTER_VERSION = new Uint8Array([0x00, 0x00, 0x01, 0x00]);
+  const DAT_MD5_PLACEHOLDER = new Uint8Array([0x01, 0xee, 0x5e, 0x1d, 0x8b, 0xf7, 0x81, 0x57, 0x67, 0x54, 0xbe, 0x70, 0x93, 0x01, 0xff, 0xe9]);
 
   const SBOX = [
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
@@ -285,6 +287,77 @@
       offset += chunk.length;
     }
     return out;
+  }
+
+  function md5Bytes(input) {
+    function add32(a, b) {
+      return (a + b) & 0xffffffff;
+    }
+    function rol(num, cnt) {
+      return (num << cnt) | (num >>> (32 - cnt));
+    }
+    function cmn(q, a, b, x, s, t) {
+      return add32(rol(add32(add32(a, q), add32(x, t)), s), b);
+    }
+    function ff(a, b, c, d, x, s, t) {
+      return cmn((b & c) | (~b & d), a, b, x, s, t);
+    }
+    function gg(a, b, c, d, x, s, t) {
+      return cmn((b & d) | (c & ~d), a, b, x, s, t);
+    }
+    function hh(a, b, c, d, x, s, t) {
+      return cmn(b ^ c ^ d, a, b, x, s, t);
+    }
+    function ii(a, b, c, d, x, s, t) {
+      return cmn(c ^ (b | ~d), a, b, x, s, t);
+    }
+
+    const bytes = Array.from(input);
+    const originalBitLength = bytes.length * 8;
+    bytes.push(0x80);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    for (let i = 0; i < 8; i += 1) bytes.push(Math.floor(originalBitLength / 2 ** (8 * i)) & 0xff);
+
+    let a = 0x67452301;
+    let b = 0xefcdab89;
+    let c = 0x98badcfe;
+    let d = 0x10325476;
+    for (let offset = 0; offset < bytes.length; offset += 64) {
+      const x = [];
+      for (let i = 0; i < 16; i += 1) {
+        const j = offset + i * 4;
+        x[i] = bytes[j] | (bytes[j + 1] << 8) | (bytes[j + 2] << 16) | (bytes[j + 3] << 24);
+      }
+      const aa = a, bb = b, cc = c, dd = d;
+      a = ff(a, b, c, d, x[0], 7, -680876936); d = ff(d, a, b, c, x[1], 12, -389564586); c = ff(c, d, a, b, x[2], 17, 606105819); b = ff(b, c, d, a, x[3], 22, -1044525330);
+      a = ff(a, b, c, d, x[4], 7, -176418897); d = ff(d, a, b, c, x[5], 12, 1200080426); c = ff(c, d, a, b, x[6], 17, -1473231341); b = ff(b, c, d, a, x[7], 22, -45705983);
+      a = ff(a, b, c, d, x[8], 7, 1770035416); d = ff(d, a, b, c, x[9], 12, -1958414417); c = ff(c, d, a, b, x[10], 17, -42063); b = ff(b, c, d, a, x[11], 22, -1990404162);
+      a = ff(a, b, c, d, x[12], 7, 1804603682); d = ff(d, a, b, c, x[13], 12, -40341101); c = ff(c, d, a, b, x[14], 17, -1502002290); b = ff(b, c, d, a, x[15], 22, 1236535329);
+      a = gg(a, b, c, d, x[1], 5, -165796510); d = gg(d, a, b, c, x[6], 9, -1069501632); c = gg(c, d, a, b, x[11], 14, 643717713); b = gg(b, c, d, a, x[0], 20, -373897302);
+      a = gg(a, b, c, d, x[5], 5, -701558691); d = gg(d, a, b, c, x[10], 9, 38016083); c = gg(c, d, a, b, x[15], 14, -660478335); b = gg(b, c, d, a, x[4], 20, -405537848);
+      a = gg(a, b, c, d, x[9], 5, 568446438); d = gg(d, a, b, c, x[14], 9, -1019803690); c = gg(c, d, a, b, x[3], 14, -187363961); b = gg(b, c, d, a, x[8], 20, 1163531501);
+      a = gg(a, b, c, d, x[13], 5, -1444681467); d = gg(d, a, b, c, x[2], 9, -51403784); c = gg(c, d, a, b, x[7], 14, 1735328473); b = gg(b, c, d, a, x[12], 20, -1926607734);
+      a = hh(a, b, c, d, x[5], 4, -378558); d = hh(d, a, b, c, x[8], 11, -2022574463); c = hh(c, d, a, b, x[11], 16, 1839030562); b = hh(b, c, d, a, x[14], 23, -35309556);
+      a = hh(a, b, c, d, x[1], 4, -1530992060); d = hh(d, a, b, c, x[4], 11, 1272893353); c = hh(c, d, a, b, x[7], 16, -155497632); b = hh(b, c, d, a, x[10], 23, -1094730640);
+      a = hh(a, b, c, d, x[13], 4, 681279174); d = hh(d, a, b, c, x[0], 11, -358537222); c = hh(c, d, a, b, x[3], 16, -722521979); b = hh(b, c, d, a, x[6], 23, 76029189);
+      a = hh(a, b, c, d, x[9], 4, -640364487); d = hh(d, a, b, c, x[12], 11, -421815835); c = hh(c, d, a, b, x[15], 16, 530742520); b = hh(b, c, d, a, x[2], 23, -995338651);
+      a = ii(a, b, c, d, x[0], 6, -198630844); d = ii(d, a, b, c, x[7], 10, 1126891415); c = ii(c, d, a, b, x[14], 15, -1416354905); b = ii(b, c, d, a, x[5], 21, -57434055);
+      a = ii(a, b, c, d, x[12], 6, 1700485571); d = ii(d, a, b, c, x[3], 10, -1894986606); c = ii(c, d, a, b, x[10], 15, -1051523); b = ii(b, c, d, a, x[1], 21, -2054922799);
+      a = ii(a, b, c, d, x[8], 6, 1873313359); d = ii(d, a, b, c, x[15], 10, -30611744); c = ii(c, d, a, b, x[6], 15, -1560198380); b = ii(b, c, d, a, x[13], 21, 1309151649);
+      a = ii(a, b, c, d, x[4], 6, -145523070); d = ii(d, a, b, c, x[11], 10, -1120210379); c = ii(c, d, a, b, x[2], 15, 718787259); b = ii(b, c, d, a, x[9], 21, -343485551);
+      a = add32(a, aa); b = add32(b, bb); c = add32(c, cc); d = add32(d, dd);
+    }
+
+    const out = new Uint8Array(16);
+    [a, b, c, d].forEach((word, wordIndex) => {
+      for (let i = 0; i < 4; i += 1) out[wordIndex * 4 + i] = (word >>> (i * 8)) & 0xff;
+    });
+    return out;
+  }
+
+  function appendDatFooter(encryptedBytes) {
+    const hashInput = concatBytes([encryptedBytes, DAT_FOOTER_VERSION, DAT_MD5_PLACEHOLDER]);
+    return concatBytes([encryptedBytes, DAT_FOOTER_VERSION, md5Bytes(hashInput)]);
   }
 
   function isUidObject(value) {
@@ -741,7 +814,13 @@
       if (hasBplistHeader(decrypted)) {
         try {
           const plist = new BplistReader(decrypted).parse();
-          return { plistBytes: decrypted, encrypted: true, plist, ...resolveKeyedArchive(plist) };
+          return {
+            plistBytes: decrypted,
+            encrypted: true,
+            datTailBytes: raw.slice(n),
+            plist,
+            ...resolveKeyedArchive(plist),
+          };
         } catch {
           // Try a shorter 16-byte-aligned prefix. Some DAT files carry a plaintext tail.
         }
@@ -853,6 +932,19 @@
 
   function userDatToPlayerData(decoded, source = "local-dat") {
     const user = decoded.tree || {};
+    const hidden = {
+      available_workers: getInt(user, "availableWorkers", getInt(user, "totalWorkers", 3)),
+      upgrade_percent: getInt(user, "upgradePercent", 0),
+      next_story_section_id: getInt(user, "nextStorySectionId", 1),
+      cur_quest_id: getInt(user, "curQuestId", 0),
+      cur_quest_result: numberValue(user.curQuestResult, 0),
+      next_quest_id: getInt(user, "nextQuestId", 1),
+      map_extend: getInt(user, "mapExtend", 1),
+      npcs: decodeUserInfoNpcs(user),
+      gifts: decodedUserArchiveField(decoded, "gifts") || [],
+      achieve_unlock: decodedUserArchiveField(decoded, "achieveUnlock") || null,
+      attribute_value: decodedUserArchiveField(decoded, "attributeValue") || null,
+    };
     return {
       format: "moleworld-player",
       version: 1,
@@ -870,6 +962,7 @@
         total_workers: getInt(user, "totalWorkers", 0),
         total_rooms: getInt(user, "totalRooms", 0),
       },
+      user_hidden: hidden,
     };
   }
 
@@ -1084,24 +1177,163 @@
 
   function playerDataToUserTree(playerData) {
     const info = playerData?.user_info || {};
-    return {
-      userId: getInt(playerData, "user_id", getInt(playerData, "userId", 0)),
+    const hidden = playerData?.user_hidden || {};
+    const totalWorkers = getInt(info, "total_workers", getInt(info, "totalWorkers", 3));
+    const availableWorkers = getInt(hidden, "available_workers", getInt(hidden, "availableWorkers", totalWorkers));
+    const tree = {
+      __class: "UserInfoData",
       username: getString(info, "name", "Mole"),
+      userId: getInt(playerData, "user_id", getInt(playerData, "userId", 0)),
       curLevel: Math.max(1, getInt(info, "cur_level", getInt(info, "curLevel", 1))),
       xp: getInt(info, "xp", 0),
-      gold: getInt(info, "gold", 0),
+      gold: getInt(info, "gold", 300),
       vipGold: getInt(info, "vip_gold", getInt(info, "vipGold", 0)),
-      vipLevel: getInt(info, "vip_level", getInt(info, "vipLevel", 0)),
+      totalWorkers,
+      availableWorkers,
+      upgradePercent: getInt(hidden, "upgrade_percent", getInt(hidden, "upgradePercent", 0)),
       iconIndex: getInt(info, "icon_index", getInt(info, "iconIndex", 0)),
-      totalWorkers: getInt(info, "total_workers", getInt(info, "totalWorkers", 0)),
-      totalRooms: getInt(info, "total_rooms", getInt(info, "totalRooms", 0)),
+      totalRooms: getInt(info, "total_rooms", getInt(info, "totalRooms", 1)),
+      nextStorySectionId: getInt(hidden, "next_story_section_id", getInt(hidden, "nextStorySectionId", 1)),
+      curQuestId: getInt(hidden, "cur_quest_id", getInt(hidden, "curQuestId", 0)),
+      curQuestResult: numberValue(hidden.cur_quest_result ?? hidden.curQuestResult, 0),
+      nextQuestId: getInt(hidden, "next_quest_id", getInt(hidden, "nextQuestId", 1)),
+      mapExtend: getInt(hidden, "map_extend", getInt(hidden, "mapExtend", 1)),
+      npcs: buildUserInfoNpcs(hidden),
     };
+
+    const gifts = userInfoArray(hidden.gifts);
+    if (gifts.length) tree.gifts = gifts;
+
+    const achieveUnlock = userInfoDictionary(hidden.achieve_unlock ?? hidden.achieveUnlock);
+    if (achieveUnlock) tree.achieveUnlock = achieveUnlock;
+
+    const attributeValue = userInfoDictionary(hidden.attribute_value ?? hidden.attributeValue);
+    if (attributeValue) tree.attributeValue = attributeValue;
+
+    return tree;
+  }
+
+  function appleArchiveNow() {
+    return (Date.now() - APPLE_EPOCH_UNIX_MS) / 1000;
+  }
+
+  function decodeUserInfoNpcs(source) {
+    const npcs = userInfoArray(source?.npcs)
+      .filter((npc) => npc && typeof npc === "object")
+      .map((npc) => ({
+        npc_id: getInt(npc, "npc_id", getInt(npc, "npcId", 0)),
+        index: getInt(npc, "index", 0),
+        last_cool_down_time: numberValue(npc.last_cool_down_time ?? npc.lastCoolDownTime, appleArchiveNow()),
+      }))
+      .filter((npc) => npc.npc_id);
+    if (npcs.length) return npcs;
+    const now = appleArchiveNow();
+    return [97, 98, 93, 103].map((npcId) => ({
+      npc_id: npcId,
+      index: 0,
+      last_cool_down_time: now,
+    }));
+  }
+
+  function buildUserInfoNpcs(source) {
+    const npcs = userInfoArray(source?.npcs)
+      .filter((npc) => npc && typeof npc === "object")
+      .map((npc) => ({
+        __class: "NpcData",
+        npcId: getInt(npc, "npc_id", getInt(npc, "npcId", 0)),
+        index: getInt(npc, "index", 0),
+        lastCoolDownTime: numberValue(npc.last_cool_down_time ?? npc.lastCoolDownTime, appleArchiveNow()),
+      }))
+      .filter((npc) => npc.npcId);
+    if (npcs.length) return npcs;
+    const now = appleArchiveNow();
+    return [97, 98, 93, 103].map((npcId) => ({
+      __class: "NpcData",
+      npcId,
+      index: 0,
+      lastCoolDownTime: now,
+    }));
+  }
+
+  function userInfoArray(value) {
+    return Array.isArray(value) ? clonePlain(value) : [];
+  }
+
+  function userInfoDictionary(value) {
+    if (Array.isArray(value)) {
+      const typedEntries = value
+        .filter((entry) => entry && typeof entry === "object")
+        .map((entry) => ({
+          key: nsNumberArchiveObject(entry.key),
+          value: nsNumberArchiveObject(entry.value),
+        }));
+      return typedEntries.length ? { __class: "NSMutableDictionary", __typedEntries: typedEntries } : null;
+    }
+    if (!value || typeof value !== "object") return null;
+    const entries = Object.entries(value).filter(([key]) => key !== "__class" && key !== "__entries" && key !== "source_item");
+    if (!entries.length) return null;
+    if (entries.some(([key]) => key === "[object Object]")) return null;
+    return {
+      __class: value.__class || "NSMutableDictionary",
+      __entries: entries,
+    };
+  }
+
+  function nsNumberArchiveObject(value) {
+    if (value && typeof value === "object") {
+      if ("NS.intval" in value) return { __class: "NSNumber", "NS.intval": getInt(value, "NS.intval", 0) };
+      if ("NS.dblval" in value) return { __class: "NSNumber", "NS.dblval": numberValue(value["NS.dblval"], 0) };
+      if ("NS.floatval" in value) return { __class: "NSNumber", "NS.floatval": numberValue(value["NS.floatval"], 0) };
+      if ("value" in value) return nsNumberArchiveObject(value.value);
+    }
+    return { __class: "NSNumber", "NS.intval": getInt({ value }, "value", 0) };
+  }
+
+  function decodedUserArchiveField(decoded, key) {
+    const root = archiveRootDictionary(decoded.plist);
+    if (!root || !(key in root)) return null;
+    return archiveValueToTree(decoded.plist, root[key]);
+  }
+
+  function archiveClassName(objects, dict) {
+    const classUid = uidOf(dict?.$class);
+    const cls = classUid == null ? null : objects?.[classUid];
+    return cls?.$classname || cls?.$classes?.[0] || null;
+  }
+
+  function archiveValueToTree(plist, value, depth = 0) {
+    if (depth > 48) return null;
+    const objects = plist?.$objects;
+    const uid = uidOf(value);
+    if (uid != null) return archiveValueToTree(plist, objects?.[uid], depth + 1);
+    if (Array.isArray(value)) return value.map((item) => archiveValueToTree(plist, item, depth + 1));
+    if (!value || typeof value !== "object") return value;
+    if (isDataObject(value) || isRealObject(value)) return clonePlain(value);
+
+    const cls = archiveClassName(objects, value);
+    if (cls === "NSNumber") return numberValue(value, 0);
+    if (Array.isArray(value["NS.keys"]) && Array.isArray(value["NS.objects"])) {
+      return value["NS.keys"].map((keyRef, index) => ({
+        key: archiveValueToTree(plist, keyRef, depth + 1),
+        value: archiveValueToTree(plist, value["NS.objects"][index], depth + 1),
+      }));
+    }
+    if (Array.isArray(value["NS.objects"])) {
+      return value["NS.objects"].map((item) => archiveValueToTree(plist, item, depth + 1));
+    }
+    const out = {};
+    if (cls) out.__class = cls;
+    for (const [entryKey, child] of Object.entries(value)) {
+      if (entryKey !== "$class") out[entryKey] = archiveValueToTree(plist, child, depth + 1);
+    }
+    return out;
   }
 
   function playerDataToDatBytes(playerData) {
     const builder = createArchiveBuilder();
-    const rootIndex = builder.addDict(playerDataToUserTree(playerData), "NSDictionary");
-    return archiveToDatBytes(rootIndex, builder);
+    const rootIndex = addTreeValueOriginalOrder(builder, playerDataToUserTree(playerData));
+    const plistBytes = writeBinaryPlist(builder.finish(rootIndex));
+    return appendDatFooter(aes128EcbEncrypt(plistBytes, DAT_KEY));
   }
 
   function clonePlain(value) {
@@ -1225,6 +1457,8 @@
   function isRealArchiveField(key) {
     return key === "NS.dblval"
       || key === "NS.floatval"
+      || key === "curQuestResult"
+      || key === "lastCoolDownTime"
       || key === "beginTime"
       || key === "coolingTime"
       || key === "gameCoolTime";
@@ -1269,16 +1503,21 @@
     if (value && typeof value === "object") {
       const className = value.__class || "NSMutableDictionary";
       const entries = (Array.isArray(value.__entries) ? value.__entries : Object.entries(value))
-        .filter(([key]) => key !== "__class" && key !== "source_item" && key !== "__entries");
+        .filter(([key]) => key !== "__class" && key !== "source_item" && key !== "__entries" && key !== "__typedEntries");
 
       if (className === "NSMutableDictionary" || className === "NSDictionary") {
         const index = builder.reserve();
         const classUid = builder.classIndex(className, archiveClassesFor(className));
-        const keyRefs = entries.map(([key]) => archiveUid(builder.addKeyString(key)));
-        const valueRefs = entries.map(([key, child]) => {
-          const value = isRealArchiveField(key) ? { $real: numberValue(child, 0) } : child;
-          return archiveUid(addTreeValueOriginalOrder(builder, value));
-        });
+        const typedEntries = Array.isArray(value.__typedEntries) ? value.__typedEntries : null;
+        const keyRefs = typedEntries
+          ? typedEntries.map((entry) => archiveUid(addTreeValueOriginalOrder(builder, entry.key)))
+          : entries.map(([key]) => archiveUid(builder.addKeyString(key)));
+        const valueRefs = typedEntries
+          ? typedEntries.map((entry) => archiveUid(addTreeValueOriginalOrder(builder, entry.value)))
+          : entries.map(([key, child]) => {
+            const value = isRealArchiveField(key) ? { $real: numberValue(child, 0) } : child;
+            return archiveUid(addTreeValueOriginalOrder(builder, value));
+          });
         return builder.set(index, {
           $class: archiveUid(classUid),
           "NS.keys": keyRefs,

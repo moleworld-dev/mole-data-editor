@@ -86,6 +86,24 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function normalizeUserHidden(input = {}, userInfo = {}) {
+  const totalWorkers = intOrZero(userInfo.total_workers ?? userInfo.totalWorkers ?? 3);
+  const hidden = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  return {
+    available_workers: intOrZero(hidden.available_workers ?? hidden.availableWorkers ?? totalWorkers),
+    upgrade_percent: intOrZero(hidden.upgrade_percent ?? hidden.upgradePercent),
+    next_story_section_id: intOrZero(hidden.next_story_section_id ?? hidden.nextStorySectionId ?? 1),
+    cur_quest_id: intOrZero(hidden.cur_quest_id ?? hidden.curQuestId),
+    cur_quest_result: numberOrZero(hidden.cur_quest_result ?? hidden.curQuestResult),
+    next_quest_id: intOrZero(hidden.next_quest_id ?? hidden.nextQuestId ?? 1),
+    map_extend: intOrZero(hidden.map_extend ?? hidden.mapExtend ?? 1),
+    npcs: Array.isArray(hidden.npcs) ? clone(hidden.npcs) : [],
+    gifts: Array.isArray(hidden.gifts) ? clone(hidden.gifts) : [],
+    achieve_unlock: hidden.achieve_unlock ?? hidden.achieveUnlock ?? null,
+    attribute_value: hidden.attribute_value ?? hidden.attributeValue ?? null,
+  };
+}
+
 function createEmptyPlayerData() {
   return {
     format: PLAYER_FORMAT,
@@ -101,9 +119,10 @@ function createEmptyPlayerData() {
       vip_gold: 0,
       vip_level: 0,
       icon_index: 0,
-      total_workers: 0,
-      total_rooms: 0,
+      total_workers: 3,
+      total_rooms: 1,
     },
+    user_hidden: normalizeUserHidden({}, { total_workers: 3 }),
   };
 }
 
@@ -335,7 +354,7 @@ function normalizeUserInfo(input = {}) {
 function normalizePlayerData(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("玩家 JSON 顶层必须是对象。");
   const userInfo = input.user_info || input;
-  return {
+  const out = {
     format: PLAYER_FORMAT,
     version: SAVE_VERSION,
     exported_at: input.exported_at || new Date().toISOString(),
@@ -343,6 +362,8 @@ function normalizePlayerData(input) {
     user_id: intOrZero(input.user_id ?? input.userId),
     user_info: normalizeUserInfo(userInfo),
   };
+  out.user_hidden = normalizeUserHidden(input.user_hidden, out.user_info);
+  return out;
 }
 
 function normalizeObject(obj = {}, index = 0) {
