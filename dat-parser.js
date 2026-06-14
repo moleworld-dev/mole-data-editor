@@ -440,23 +440,13 @@
     return out;
   }
 
-  async function datFilesToSave(files) {
-    const decodedFiles = [];
-    for (const file of files) {
-      const decoded = decodeDatBytes(new Uint8Array(await file.arrayBuffer()));
-      decoded.kind = classifyDat(decoded);
-      decoded.fileName = file.name;
-      decodedFiles.push(decoded);
-    }
-    const userDat = decodedFiles.find((item) => item.kind === "userinfo");
-    const mapDat = decodedFiles.find((item) => item.kind === "map");
-    if (!userDat) throw new Error("no userinfo DAT found");
-    const user = userDat.tree || {};
-    const out = {
-      format: "moleworld-save",
+  function userDatToPlayerData(decoded, source = "local-dat") {
+    const user = decoded.tree || {};
+    return {
+      format: "moleworld-player",
       version: 1,
       exported_at: new Date().toISOString(),
-      source: "local-dat",
+      source,
       user_id: getInt(user, "userId", 0),
       user_info: {
         name: getString(user, "username", "Mole"),
@@ -469,6 +459,58 @@
         total_workers: getInt(user, "totalWorkers", 0),
         total_rooms: getInt(user, "totalRooms", 0),
       },
+    };
+  }
+
+  async function mapDatToMapData(decoded, source = "local-dat") {
+    return {
+      format: "moleworld-map",
+      version: 1,
+      exported_at: new Date().toISOString(),
+      source,
+      map_blob_b64: bytesToBase64(await gzipBytes(decoded.plistBytes)),
+      objects: extractMapObjects(decoded.tree),
+    };
+  }
+
+  async function datFileToData(file) {
+    const decoded = decodeDatBytes(new Uint8Array(await file.arrayBuffer()));
+    decoded.kind = classifyDat(decoded);
+    decoded.fileName = file.name;
+    const report = {
+      fileName: decoded.fileName,
+      kind: decoded.kind,
+      encrypted: decoded.encrypted,
+      plistBytes: decoded.plistBytes.length,
+    };
+    if (decoded.kind === "userinfo") {
+      return { kind: decoded.kind, player: userDatToPlayerData(decoded), report };
+    }
+    if (decoded.kind === "map") {
+      return { kind: decoded.kind, map: await mapDatToMapData(decoded), report };
+    }
+    return { kind: decoded.kind, decoded, report };
+  }
+
+  async function datFilesToSave(files) {
+    const decodedFiles = [];
+    for (const file of files) {
+      const decoded = decodeDatBytes(new Uint8Array(await file.arrayBuffer()));
+      decoded.kind = classifyDat(decoded);
+      decoded.fileName = file.name;
+      decodedFiles.push(decoded);
+    }
+    const userDat = decodedFiles.find((item) => item.kind === "userinfo");
+    const mapDat = decodedFiles.find((item) => item.kind === "map");
+    if (!userDat) throw new Error("no userinfo DAT found");
+    const player = userDatToPlayerData(userDat);
+    const out = {
+      format: "moleworld-save",
+      version: 1,
+      exported_at: new Date().toISOString(),
+      source: "local-dat",
+      user_id: player.user_id,
+      user_info: player.user_info,
       objects: mapDat ? extractMapObjects(mapDat.tree) : [],
       social: null,
       progress: null,
@@ -513,6 +555,7 @@
 
   window.MoleDat = {
     decodeDatBytes,
+    datFileToData,
     datFilesToSave,
     classifyDat,
     decodeMapBase64,

@@ -4,71 +4,51 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MoleDataEditor</title>
-    <link rel="stylesheet" href="./styles.css?v=20260614-map" />
+    <link rel="stylesheet" href="./styles.css?v=20260614-split" />
   </head>
   <body>
     <main class="app-shell">
       <section class="toolbar">
         <div>
           <h1>MoleDataEditor</h1>
-          <p>本地存档编辑器，文件只在浏览器里读取和导出。</p>
+          <p>本地存档编辑器，玩家数据和地图数据分开读取、修改和导出。</p>
         </div>
         <div class="toolbar-actions">
-          <label class="file-button">
-            <input id="fileInput" type="file" accept=".json,.dat,application/json" multiple />
-            选择存档
-          </label>
-          <label class="file-button">
-            <input id="folderInput" type="file" webkitdirectory directory multiple />
-            选择目录
-          </label>
           <button id="sampleBtn" type="button">载入示例</button>
-          <button id="downloadBtn" type="button" disabled>下载修改版</button>
         </div>
       </section>
 
       <section id="editorShell" class="editor-shell">
         <aside class="sidebar">
           <div class="file-summary">
-            <span id="fileName">未载入文件</span>
+            <span id="fileName">浏览器内存</span>
             <strong id="saveTitle">-</strong>
             <small id="saveMeta">-</small>
           </div>
-          <span id="importStatus" class="import-status">可拖入存档文件，或使用上方按钮选择。</span>
+          <span id="importStatus" class="import-status">请选择玩家数据或地图数据标签页导入文件。</span>
           <nav class="tabs" aria-label="编辑区域">
-            <button class="tab active" type="button" data-tab="overview">概览</button>
-            <button class="tab" type="button" data-tab="user">玩家数值</button>
-            <button class="tab" type="button" data-tab="objects">摆放对象</button>
-            <button class="tab" type="button" data-tab="raw">原始 JSON</button>
+            <button class="tab active" type="button" data-tab="player">玩家数据</button>
+            <button class="tab" type="button" data-tab="map">地图数据</button>
           </nav>
           <div id="validationBox" class="validation-box"></div>
         </aside>
 
         <div class="workbench">
-          <section id="tab-overview" class="tab-panel active">
-            <div class="stats-grid" id="statsGrid"></div>
-            <div class="map-panel">
-              <div class="panel-head">
+          <section id="tab-player" class="tab-panel active">
+            <div class="panel-head">
               <div>
-                <h2>庄园摆放预览</h2>
-                <p>使用 WebGL 按 `objects[].enc_mapdata_b64` 的 baseTile 坐标绘制导出贴图。</p>
+                <h2>玩家数据</h2>
+                <p>导入 userinfo.dat 或玩家 JSON，修改数值后可单独导出。</p>
               </div>
-                <div class="preview-actions">
-                  <button id="previewFitBtn" type="button">适配</button>
-                  <button id="previewMapBtn" type="button" class="active">地图</button>
-                  <button id="previewGridBtn" type="button">网格</button>
-                  <button id="previewMissingBtn" type="button" class="active">缺图占位</button>
-                </div>
-              </div>
-              <div class="map-canvas-wrap">
-                <canvas id="objectMap" role="img" aria-label="庄园对象实际摆放预览"></canvas>
-                <div id="previewTooltip" class="preview-tooltip" hidden></div>
-                <div id="previewStatus" class="preview-status">正在读取导出的贴图资源...</div>
+              <div class="panel-actions">
+                <label class="file-button">
+                  <input id="playerFileInput" type="file" accept=".json,.dat,application/json" />
+                  导入玩家数据
+                </label>
+                <button id="exportPlayerBtn" type="button">导出玩家数据</button>
               </div>
             </div>
-          </section>
 
-          <section id="tab-user" class="tab-panel">
             <form id="userForm" class="form-grid">
               <label>米米号<input name="user_id" type="number" step="1" /></label>
               <label>昵称<input name="name" maxlength="31" /></label>
@@ -82,66 +62,117 @@
               <label>房间数<input name="total_rooms" type="number" min="0" step="1" /></label>
             </form>
 
-            <div class="blob-tools">
-              <div>
-                <h2>地图整图 blob</h2>
-                <p id="mapBlobInfo">-</p>
+            <div class="json-block">
+              <div class="panel-head compact">
+                <div>
+                  <h2>玩家 JSON</h2>
+                  <p>这里显示当前玩家数据；也可以直接编辑后格式化。</p>
+                </div>
+                <button id="formatPlayerJsonBtn" type="button">格式化</button>
               </div>
-              <div class="segmented">
-                <button id="keepMapBtn" type="button" class="active">保留</button>
-                <button id="clearMapBtn" type="button">清空</button>
-              </div>
-            </div>
-            <div class="map-base64-tools">
-              <label>map base64<textarea id="mapBase64Input" spellcheck="false" placeholder="Paste map.dat or map_blob_b64 base64"></textarea></label>
-              <button id="loadMapBase64Btn" type="button">加载 base64 地图</button>
+              <textarea id="playerJsonEditor" spellcheck="false"></textarea>
             </div>
           </section>
 
-          <section id="tab-objects" class="tab-panel">
-            <div class="panel-head compact">
+          <section id="tab-map" class="tab-panel">
+            <div class="panel-head">
               <div>
-                <h2>对象表</h2>
-                <p>可编辑 `obj_id`、`scene_id`、`obj_kind`、坐标和翻转；改坐标会同步改写 `enc_mapdata_b64` 前 9 字节。</p>
+                <h2>地图数据</h2>
+                <p>导入 map.dat、粘贴 map base64，或导出当前地图 JSON。</p>
               </div>
-              <button id="addObjectBtn" type="button">新增对象</button>
+              <div class="panel-actions">
+                <label class="file-button">
+                  <input id="mapFileInput" type="file" accept=".json,.dat,application/json" />
+                  导入地图数据
+                </label>
+                <button id="openPasteMapBtn" type="button">粘贴地图</button>
+                <button id="exportMapBtn" type="button">导出地图数据</button>
+              </div>
             </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>kind</th>
-                    <th>scene</th>
-                    <th>key</th>
-                    <th>obj</th>
-                    <th>seq</th>
-                    <th>x</th>
-                    <th>y</th>
-                    <th>flip</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody id="objectsTable"></tbody>
-              </table>
-            </div>
-          </section>
 
-          <section id="tab-raw" class="tab-panel">
-            <div class="panel-head compact">
-              <div>
-                <h2>原始 JSON</h2>
-                <p>适合编辑表单未覆盖的字段。离开此页前会尝试解析并同步到表单。</p>
+            <div class="stats-grid" id="mapStatsGrid"></div>
+
+            <div class="map-panel">
+              <div class="panel-head">
+                <div>
+                  <h2>庄园摆放预览</h2>
+                  <p>按 `objects[].enc_mapdata_b64` 的 baseTile 坐标绘制导出贴图。</p>
+                </div>
+                <div class="preview-actions">
+                  <button id="previewFitBtn" type="button">适配</button>
+                  <button id="previewMapBtn" type="button" class="active">地图</button>
+                  <button id="previewGridBtn" type="button">网格</button>
+                  <button id="previewMissingBtn" type="button" class="active">缺图占位</button>
+                </div>
               </div>
-              <button id="formatJsonBtn" type="button">格式化</button>
+              <div class="map-canvas-wrap">
+                <canvas id="objectMap" role="img" aria-label="庄园对象实际摆放预览"></canvas>
+                <div id="previewTooltip" class="preview-tooltip" hidden></div>
+                <div id="previewStatus" class="preview-status">正在读取导出的贴图资源...</div>
+              </div>
             </div>
-            <textarea id="jsonEditor" spellcheck="false"></textarea>
+
+            <div class="map-data-grid">
+              <section class="data-panel">
+                <div class="panel-head compact">
+                  <div>
+                    <h2>对象数据</h2>
+                    <p>当前只展示地图解析出的摆放对象。</p>
+                  </div>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>kind</th>
+                        <th>scene</th>
+                        <th>key</th>
+                        <th>obj</th>
+                        <th>seq</th>
+                        <th>x</th>
+                        <th>y</th>
+                        <th>flip</th>
+                      </tr>
+                    </thead>
+                    <tbody id="objectsTable"></tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section class="data-panel">
+                <div class="panel-head compact">
+                  <div>
+                    <h2>地图 JSON</h2>
+                    <p>这里显示当前地图 blob 和对象列表。</p>
+                  </div>
+                  <button id="formatMapJsonBtn" type="button">格式化</button>
+                </div>
+                <textarea id="mapJsonEditor" spellcheck="false"></textarea>
+              </section>
+            </div>
           </section>
         </div>
       </section>
     </main>
 
-    <script src="./dat-parser.js?v=20260614-map-base64" charset="UTF-8"></script>
-    <script src="./manor-preview.js?v=20260614-map-base64" charset="UTF-8"></script>
-    <script src="./app.js?v=20260614-map-base64" charset="UTF-8"></script>
+    <dialog id="pasteMapDialog" class="paste-dialog">
+      <form method="dialog">
+        <div class="panel-head">
+          <div>
+            <h2>粘贴地图 base64</h2>
+            <p>支持 map.dat base64 或已 gzip 的 map_blob_b64。</p>
+          </div>
+          <button id="closePasteMapBtn" type="submit" value="cancel">关闭</button>
+        </div>
+        <label>map base64<textarea id="mapBase64Input" spellcheck="false" placeholder="Paste map.dat or map_blob_b64 base64"></textarea></label>
+        <div class="dialog-actions">
+          <button id="loadMapBase64Btn" type="button">加载地图</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="./dat-parser.js?v=20260614-split" charset="UTF-8"></script>
+    <script src="./manor-preview.js?v=20260614-split" charset="UTF-8"></script>
+    <script src="./app.js?v=20260614-split" charset="UTF-8"></script>
   </body>
 </html>

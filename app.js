@@ -1,43 +1,48 @@
 "use strict";
 
-const SAVE_FORMAT = "moleworld-save";
+const PLAYER_FORMAT = "moleworld-player";
+const MAP_FORMAT = "moleworld-map";
+const COMBINED_FORMAT = "moleworld-save";
 const SAVE_VERSION = 1;
 const U32_MAX = 4294967295;
 
-let saveData = null;
-let activeFileName = "";
-let rawDirty = false;
-let originalMapBlobState = { present: false, value: undefined };
+let playerData = createEmptyPlayerData();
+let mapData = createEmptyMapData();
+let activeTab = "player";
+let playerJsonDirty = false;
+let mapJsonDirty = false;
+let playerFileName = "新建玩家数据";
+let mapFileName = "新建地图数据";
 let importReport = null;
 
 const els = {
-  fileInput: document.getElementById("fileInput"),
-  folderInput: document.getElementById("folderInput"),
-  emptyState: document.getElementById("emptyState"),
+  playerFileInput: document.getElementById("playerFileInput"),
+  mapFileInput: document.getElementById("mapFileInput"),
   editorShell: document.getElementById("editorShell"),
   fileName: document.getElementById("fileName"),
   saveTitle: document.getElementById("saveTitle"),
   saveMeta: document.getElementById("saveMeta"),
-  downloadBtn: document.getElementById("downloadBtn"),
   validationBox: document.getElementById("validationBox"),
-  statsGrid: document.getElementById("statsGrid"),
   userForm: document.getElementById("userForm"),
-  mapBlobInfo: document.getElementById("mapBlobInfo"),
-  keepMapBtn: document.getElementById("keepMapBtn"),
-  clearMapBtn: document.getElementById("clearMapBtn"),
+  playerJsonEditor: document.getElementById("playerJsonEditor"),
+  mapJsonEditor: document.getElementById("mapJsonEditor"),
+  formatPlayerJsonBtn: document.getElementById("formatPlayerJsonBtn"),
+  formatMapJsonBtn: document.getElementById("formatMapJsonBtn"),
+  exportPlayerBtn: document.getElementById("exportPlayerBtn"),
+  exportMapBtn: document.getElementById("exportMapBtn"),
+  openPasteMapBtn: document.getElementById("openPasteMapBtn"),
+  pasteMapDialog: document.getElementById("pasteMapDialog"),
   mapBase64Input: document.getElementById("mapBase64Input"),
   loadMapBase64Btn: document.getElementById("loadMapBase64Btn"),
+  closePasteMapBtn: document.getElementById("closePasteMapBtn"),
   objectMap: document.getElementById("objectMap"),
   objectsTable: document.getElementById("objectsTable"),
-  addObjectBtn: document.getElementById("addObjectBtn"),
+  mapStatsGrid: document.getElementById("mapStatsGrid"),
   sampleBtn: document.getElementById("sampleBtn"),
   importStatus: document.getElementById("importStatus"),
-  jsonEditor: document.getElementById("jsonEditor"),
-  formatJsonBtn: document.getElementById("formatJsonBtn"),
 };
 
 function setImportStatus(text, kind = "") {
-  if (!els.importStatus) return;
   els.importStatus.textContent = text;
   els.importStatus.className = `import-status ${kind}`.trim();
 }
@@ -46,9 +51,9 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function createEmptySave() {
+function createEmptyPlayerData() {
   return {
-    format: SAVE_FORMAT,
+    format: PLAYER_FORMAT,
     version: SAVE_VERSION,
     exported_at: new Date().toISOString(),
     source: "local",
@@ -64,9 +69,17 @@ function createEmptySave() {
       total_workers: 0,
       total_rooms: 0,
     },
+  };
+}
+
+function createEmptyMapData() {
+  return {
+    format: MAP_FORMAT,
+    version: SAVE_VERSION,
+    exported_at: new Date().toISOString(),
+    source: "local",
+    map_blob_b64: null,
     objects: [],
-    social: null,
-    progress: null,
   };
 }
 
@@ -97,12 +110,6 @@ function base64ToBytes(b64) {
   return out;
 }
 
-function bytesToBase64(bytes) {
-  let bin = "";
-  for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
-}
-
 function parseEncMapdata(b64) {
   if (!b64) return { x: null, y: null, flip: false, valid: false };
   try {
@@ -114,174 +121,88 @@ function parseEncMapdata(b64) {
       y: Number(view.getFloat32(4, true).toFixed(3)),
       flip: view.getUint8(8) !== 0,
       valid: true,
-      bytes,
     };
   } catch {
     return { x: null, y: null, flip: false, valid: false };
   }
 }
 
-function writeEncMapdata(originalB64, x, y, flip) {
-  let bytes;
-  try {
-    bytes = originalB64 ? base64ToBytes(originalB64) : new Uint8Array(9);
-  } catch {
-    bytes = new Uint8Array(9);
-  }
-  if (bytes.length < 9) {
-    const expanded = new Uint8Array(9);
-    expanded.set(bytes);
-    bytes = expanded;
-  }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+function writeEncMapdata(x, y, flip) {
+  const bytes = new Uint8Array(9);
+  const view = new DataView(bytes.buffer);
   view.setFloat32(0, numberOrZero(x), true);
   view.setFloat32(4, numberOrZero(y), true);
   view.setUint8(8, flip ? 1 : 0);
-  return bytesToBase64(bytes);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
 }
 
-function itemCategory(id) {
-  if (id >= 1000 && id <= 2999) return "工作间";
-  if (id >= 3000 && id <= 3999) return "种子/作物";
-  if (id >= 4000 && id <= 4999) return "家具";
-  if (id >= 5000 && id <= 5999) return "小屋/房间";
-  if (id >= 6000 && id <= 6999) return "功能建筑";
-  if (id >= 14000 && id <= 14999) return "装饰摆件";
-  if (id >= 15000 && id <= 15999) return "树";
-  if (id >= 21000 && id <= 21999) return "建筑设施";
-  if (id >= 25000 && id <= 25999) return "金币礼包";
-  if (id >= 100000 && id <= 199999) return "材料";
-  return "物件";
-}
-
-function objectLabel(id) {
-  const known = {
-    5001: "小屋",
-    5002: "大屋",
-    6002: "功能建筑",
-    6003: "功能建筑",
-    15001: "树",
-    4001: "小家具",
-    4005: "高级家具",
-    14021: "装饰摆件",
-    25001: "摩尔豆礼包(500)",
-    25002: "摩尔豆礼包(1000)",
-    25003: "摩尔豆礼包(5000)",
-    25004: "摩尔豆礼包(12000)",
-    25005: "摩尔豆礼包(40000)",
-    30001: "摩尔公寓",
-    30002: "布兰的家",
-    30101: "水果店",
+function normalizeUserInfo(input = {}) {
+  return {
+    name: String(input.name ?? input.username ?? "Mole"),
+    cur_level: Math.max(1, intOrZero(input.cur_level ?? input.curLevel ?? 1)),
+    xp: intOrZero(input.xp),
+    gold: intOrZero(input.gold),
+    vip_gold: intOrZero(input.vip_gold ?? input.vipGold),
+    vip_level: intOrZero(input.vip_level),
+    icon_index: intOrZero(input.icon_index ?? input.iconIndex),
+    total_workers: intOrZero(input.total_workers ?? input.totalWorkers),
+    total_rooms: intOrZero(input.total_rooms ?? input.totalRooms),
   };
-  return known[id] || `${itemCategory(id)} #${id}`;
 }
 
-function validateSave(data) {
-  const errors = [];
-  const warnings = [];
-  if (!data || typeof data !== "object" || Array.isArray(data)) errors.push("存档顶层必须是 JSON 对象。");
-  if (data?.format !== SAVE_FORMAT) errors.push(`format 应为 ${SAVE_FORMAT}。`);
-  if (data?.version !== SAVE_VERSION) warnings.push(`当前只按 v${SAVE_VERSION} 结构编辑，文件版本是 ${data?.version ?? "缺失"}。`);
-  if (!Number.isInteger(Number(data?.user_id))) errors.push("user_id 必须是整数。");
-  if (!data?.user_info || typeof data.user_info !== "object") errors.push("缺少 user_info。");
-
-  const ui = data?.user_info || {};
-  ["name", "cur_level", "xp", "gold", "vip_gold", "vip_level", "icon_index", "total_workers", "total_rooms"].forEach((key) => {
-    if (ui[key] === undefined) errors.push(`user_info.${key} 缺失。`);
-  });
-  ["xp", "gold", "vip_gold"].forEach((key) => {
-    const v = Number(ui[key]);
-    if (Number.isFinite(v) && (v < 0 || v > U32_MAX)) warnings.push(`${key} 会按 u32 写协议，建议保持在 0..${U32_MAX}。`);
-  });
-  if (Number(ui.cur_level) > 52) warnings.push("客户端上传前会拒绝等级大于 52 的存档。");
-  if (Number(ui.icon_index) >= 62) warnings.push("客户端 decodeRemoteData 会把 >=62 的头像索引归零。");
-  if (ui.map_blob_b64 !== undefined && ui.map_blob_b64 !== null && typeof ui.map_blob_b64 !== "string") {
-    errors.push("map_blob_b64 只能缺失、null 或 base64 字符串。");
-  }
-  if (data.objects !== undefined && data.objects !== null && !Array.isArray(data.objects)) errors.push("objects 必须是数组或缺失。");
-  if (Array.isArray(data.objects) && data.objects.length > 10000) warnings.push("objects 超过建议上限 10000 行。");
-  (data.objects || []).forEach((obj, index) => {
-    ["scene_id", "obj_kind", "key_id", "obj_id", "seq_id"].forEach((key) => {
-      if (!Number.isFinite(Number(obj[key]))) errors.push(`objects[${index}].${key} 必须是数字。`);
-    });
-    if (obj.enc_mapdata_b64 && byteLengthFromBase64(obj.enc_mapdata_b64) > 64 * 1024) {
-      warnings.push(`objects[${index}].enc_mapdata_b64 超过建议单行 64KB 上限。`);
-    }
-  });
-  return { errors, warnings };
+function normalizePlayerData(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("玩家 JSON 顶层必须是对象。");
+  const userInfo = input.user_info || input;
+  return {
+    format: PLAYER_FORMAT,
+    version: SAVE_VERSION,
+    exported_at: input.exported_at || new Date().toISOString(),
+    source: input.source || (input.format === COMBINED_FORMAT ? "combined-json" : "json"),
+    user_id: intOrZero(input.user_id ?? input.userId),
+    user_info: normalizeUserInfo(userInfo),
+  };
 }
 
-function notice(text, kind = "") {
-  const div = document.createElement("div");
-  div.className = `notice ${kind}`.trim();
-  div.textContent = text;
-  return div;
+function normalizeObject(obj = {}, index = 0) {
+  return {
+    scene_id: intOrZero(obj.scene_id),
+    obj_kind: intOrZero(obj.obj_kind),
+    key_id: intOrZero(obj.key_id || index + 1),
+    obj_id: intOrZero(obj.obj_id ?? obj.objectId),
+    seq_id: intOrZero(obj.seq_id || index + 1),
+    enc_mapdata_b64: typeof obj.enc_mapdata_b64 === "string" ? obj.enc_mapdata_b64 : "",
+    source_class: obj.source_class || obj.__class || undefined,
+  };
 }
 
-function renderValidation() {
-  els.validationBox.innerHTML = "";
-  if (!saveData) return;
-  const { errors, warnings } = validateSave(saveData);
-  if (importReport?.length) {
-    els.validationBox.appendChild(
-      notice(
-        `已读取 DAT：${importReport
-          .map((item) => `${item.fileName}=${item.kind}${item.encrypted ? "(已解密)" : ""}`)
-          .join("，")}`,
-      ),
-    );
-  }
-  if (!errors.length && !warnings.length) {
-    els.validationBox.appendChild(notice("校验通过。可下载修改版。"));
-  }
-  errors.forEach((msg) => els.validationBox.appendChild(notice(msg, "bad")));
-  warnings.forEach((msg) => els.validationBox.appendChild(notice(msg, "warn")));
-  els.downloadBtn.disabled = errors.length > 0;
+function normalizeMapData(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("地图 JSON 顶层必须是对象。");
+  const mapBlob = input.map_blob_b64 ?? input.user_info?.map_blob_b64 ?? null;
+  const objects = Array.isArray(input.objects) ? input.objects.map(normalizeObject) : [];
+  return {
+    format: MAP_FORMAT,
+    version: SAVE_VERSION,
+    exported_at: input.exported_at || new Date().toISOString(),
+    source: input.source || (input.format === COMBINED_FORMAT ? "combined-json" : "json"),
+    map_blob_b64: mapBlob,
+    objects,
+  };
 }
 
-function stat(label, value) {
-  const div = document.createElement("div");
-  div.className = "stat";
-  const small = document.createElement("small");
-  small.textContent = label;
-  const strong = document.createElement("strong");
-  strong.textContent = String(value ?? "-");
-  div.append(small, strong);
-  return div;
-}
-
-function renderSummary() {
-  const ui = saveData.user_info || {};
-  const objects = saveData.objects || [];
-  const mapBytes = ui.map_blob_b64 ? byteLengthFromBase64(ui.map_blob_b64) : 0;
-  els.fileName.textContent = activeFileName || "浏览器内存";
-  els.saveTitle.textContent = `${ui.name || "未命名"} (${saveData.user_id ?? "-"})`;
-  els.saveMeta.textContent = `${saveData.format || "unknown"} v${saveData.version ?? "?"} · ${objects.length} 对象 · 地图 ${formatNumber(mapBytes)} B`;
-
-  els.statsGrid.innerHTML = "";
-  [
-    ["等级", `Lv.${ui.cur_level ?? "-"}`],
-    ["经验", formatNumber(ui.xp)],
-    ["摩尔豆", formatNumber(ui.gold)],
-    ["贝壳", formatNumber(ui.vip_gold)],
-    ["VIP", `V${ui.vip_level ?? 0}`],
-    ["头像", ui.icon_index ?? "-"],
-    ["工人/房间", `${ui.total_workers ?? "-"} / ${ui.total_rooms ?? "-"}`],
-    ["地图 blob", ui.map_blob_b64 === null ? "清空" : ui.map_blob_b64 ? `${formatNumber(mapBytes)} B` : "保留/缺失"],
-  ].forEach(([label, value]) => els.statsGrid.appendChild(stat(label, value)));
-
-  els.mapBlobInfo.textContent =
-    ui.map_blob_b64 === undefined
-      ? "字段缺失：导出时会保持缺失状态。"
-      : ui.map_blob_b64 === null
-        ? "显式 null：表示清空地图，客户端通常会回到默认地图。"
-        : `base64 字符串，约 ${formatNumber(mapBytes)} 字节 gzip NSKeyedArchiver。`;
+function mapRows() {
+  return (mapData.objects || []).map((obj, index) => ({
+    ...obj,
+    index,
+    placement: parseEncMapdata(obj.enc_mapdata_b64),
+  }));
 }
 
 function renderForm() {
-  const ui = saveData.user_info || {};
+  const ui = playerData.user_info || {};
   const fields = {
-    user_id: saveData.user_id,
+    user_id: playerData.user_id,
     name: ui.name,
     cur_level: ui.cur_level,
     xp: ui.xp,
@@ -296,171 +217,316 @@ function renderForm() {
     const input = els.userForm.elements[name];
     if (input) input.value = value ?? "";
   });
-  els.keepMapBtn.classList.toggle("active", saveData.user_info?.map_blob_b64 !== null);
-  els.clearMapBtn.classList.toggle("active", saveData.user_info?.map_blob_b64 === null);
-}
-
-function objectRows() {
-  return (saveData.objects || []).map((obj, index) => ({
-    ...obj,
-    index,
-    placement: parseEncMapdata(obj.enc_mapdata_b64),
-  }));
 }
 
 function renderMap() {
-  const rows = objectRows().filter((row) => row.placement.valid);
-  window.ManorPreview?.render?.(rows);
+  window.ManorPreview?.render?.(mapRows().filter((row) => row.placement.valid));
 }
 
-function inputCell(row, key, cls = "tiny", type = "number") {
-  const input = document.createElement("input");
-  input.className = cls;
-  input.type = type;
-  input.value = row[key] ?? "";
-  input.addEventListener("change", () => {
-    if (type === "checkbox") return;
-    saveData.objects[row.index][key] = intOrZero(input.value);
-    syncAfterEdit();
-  });
-  return input;
+function stat(label, value) {
+  const div = document.createElement("div");
+  div.className = "stat";
+  const small = document.createElement("small");
+  small.textContent = label;
+  const strong = document.createElement("strong");
+  strong.textContent = String(value ?? "-");
+  div.append(small, strong);
+  return div;
+}
+
+function renderMapStats() {
+  const objects = mapData.objects || [];
+  const mapBytes = mapData.map_blob_b64 ? byteLengthFromBase64(mapData.map_blob_b64) : 0;
+  els.mapStatsGrid.innerHTML = "";
+  [
+    ["对象数", formatNumber(objects.length)],
+    ["地图 blob", mapData.map_blob_b64 === null ? "空" : mapData.map_blob_b64 ? `${formatNumber(mapBytes)} B` : "缺失"],
+    ["来源", mapData.source || "-"],
+    ["文件", mapFileName],
+  ].forEach(([label, value]) => els.mapStatsGrid.appendChild(stat(label, value)));
 }
 
 function renderObjectsTable() {
   els.objectsTable.innerHTML = "";
-  objectRows().forEach((row) => {
+  mapRows().forEach((row) => {
     const tr = document.createElement("tr");
-    const cells = [
-      inputCell(row, "obj_kind"),
-      inputCell(row, "scene_id"),
-      inputCell(row, "key_id", "wide"),
-      inputCell(row, "obj_id", "wide"),
-      inputCell(row, "seq_id", "wide"),
-    ];
-
-    const x = document.createElement("input");
-    x.className = "tiny";
-    x.type = "number";
-    x.step = "0.001";
-    x.value = row.placement.valid ? row.placement.x : "";
-    const y = x.cloneNode();
-    y.value = row.placement.valid ? row.placement.y : "";
-    const flip = document.createElement("input");
-    flip.type = "checkbox";
-    flip.checked = !!row.placement.flip;
-
-    const updatePlacement = () => {
-      saveData.objects[row.index].enc_mapdata_b64 = writeEncMapdata(
-        saveData.objects[row.index].enc_mapdata_b64,
-        x.value,
-        y.value,
-        flip.checked,
-      );
-      syncAfterEdit();
-    };
-    x.addEventListener("change", updatePlacement);
-    y.addEventListener("change", updatePlacement);
-    flip.addEventListener("change", updatePlacement);
-
-    [...cells, x, y, flip].forEach((node) => {
+    [
+      row.obj_kind,
+      row.scene_id,
+      row.key_id,
+      row.obj_id,
+      row.seq_id,
+      row.placement.valid ? row.placement.x : "-",
+      row.placement.valid ? row.placement.y : "-",
+      row.placement.flip ? "是" : "否",
+    ].forEach((value) => {
       const td = document.createElement("td");
-      td.appendChild(node);
+      td.textContent = String(value ?? "-");
       tr.appendChild(td);
     });
-
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "danger";
-    del.textContent = "删除";
-    del.addEventListener("click", () => {
-      saveData.objects.splice(row.index, 1);
-      syncAfterEdit();
-    });
-    const td = document.createElement("td");
-    td.appendChild(del);
-    tr.appendChild(td);
     els.objectsTable.appendChild(tr);
   });
 }
 
-function renderJson() {
-  els.jsonEditor.value = JSON.stringify(saveData, null, 2);
-  rawDirty = false;
+function renderPlayerJson() {
+  els.playerJsonEditor.value = JSON.stringify(playerData, null, 2);
+  playerJsonDirty = false;
 }
 
-function renderAll({ includeRaw = true } = {}) {
+function renderMapJson() {
+  els.mapJsonEditor.value = JSON.stringify(mapData, null, 2);
+  mapJsonDirty = false;
+}
+
+function notice(text, kind = "") {
+  const div = document.createElement("div");
+  div.className = `notice ${kind}`.trim();
+  div.textContent = text;
+  return div;
+}
+
+function validatePlayer() {
+  const errors = [];
+  const warnings = [];
+  if (!Number.isInteger(Number(playerData.user_id))) errors.push("user_id 必须是整数。");
+  const ui = playerData.user_info || {};
+  ["name", "cur_level", "xp", "gold", "vip_gold", "vip_level", "icon_index", "total_workers", "total_rooms"].forEach((key) => {
+    if (ui[key] === undefined) errors.push(`user_info.${key} 缺失。`);
+  });
+  ["xp", "gold", "vip_gold"].forEach((key) => {
+    const v = Number(ui[key]);
+    if (Number.isFinite(v) && (v < 0 || v > U32_MAX)) warnings.push(`${key} 建议保持在 0..${U32_MAX}。`);
+  });
+  if (Number(ui.cur_level) > 52) warnings.push("客户端上传前通常会拒绝等级大于 52 的存档。");
+  if (Number(ui.icon_index) >= 62) warnings.push("客户端会把 >=62 的头像索引归零。");
+  return { errors, warnings };
+}
+
+function validateMap() {
+  const errors = [];
+  const warnings = [];
+  if (mapData.map_blob_b64 !== undefined && mapData.map_blob_b64 !== null && typeof mapData.map_blob_b64 !== "string") {
+    errors.push("map_blob_b64 只能是 null、缺失或 base64 字符串。");
+  }
+  if (!Array.isArray(mapData.objects)) errors.push("objects 必须是数组。");
+  if ((mapData.objects || []).length > 10000) warnings.push("objects 超过建议上限 10000 行。");
+  (mapData.objects || []).forEach((obj, index) => {
+    ["scene_id", "obj_kind", "key_id", "obj_id", "seq_id"].forEach((key) => {
+      if (!Number.isFinite(Number(obj[key]))) errors.push(`objects[${index}].${key} 必须是数字。`);
+    });
+    if (obj.enc_mapdata_b64 && byteLengthFromBase64(obj.enc_mapdata_b64) > 64 * 1024) {
+      warnings.push(`objects[${index}].enc_mapdata_b64 超过建议单行 64KB 上限。`);
+    }
+  });
+  return { errors, warnings };
+}
+
+function renderValidation() {
+  els.validationBox.innerHTML = "";
+  const { errors, warnings } = activeTab === "player" ? validatePlayer() : validateMap();
+  if (importReport) {
+    els.validationBox.appendChild(notice(importReport));
+  }
+  if (!errors.length && !warnings.length) {
+    els.validationBox.appendChild(notice(activeTab === "player" ? "玩家数据校验通过。" : "地图数据校验通过。"));
+  }
+  errors.forEach((msg) => els.validationBox.appendChild(notice(msg, "bad")));
+  warnings.forEach((msg) => els.validationBox.appendChild(notice(msg, "warn")));
+}
+
+function renderSummary() {
+  const ui = playerData.user_info || {};
+  const objects = mapData.objects || [];
+  const mapBytes = mapData.map_blob_b64 ? byteLengthFromBase64(mapData.map_blob_b64) : 0;
+  els.fileName.textContent = activeTab === "player" ? playerFileName : mapFileName;
+  els.saveTitle.textContent = activeTab === "player" ? `${ui.name || "未命名"} (${playerData.user_id ?? "-"})` : `地图对象 ${objects.length}`;
+  els.saveMeta.textContent = activeTab === "player"
+    ? `Lv.${ui.cur_level ?? "-"} · 摩尔豆 ${formatNumber(ui.gold)} · 贝壳 ${formatNumber(ui.vip_gold)}`
+    : `地图 ${mapData.map_blob_b64 === null ? "空" : formatNumber(mapBytes) + " B"} · ${objects.length} 对象`;
+}
+
+function renderAll({ includePlayerJson = true, includeMapJson = true } = {}) {
   renderSummary();
   renderForm();
-  renderMap();
+  renderMapStats();
   renderObjectsTable();
+  renderMap();
   renderValidation();
-  if (includeRaw) renderJson();
-}
-
-function syncAfterEdit() {
-  renderAll({ includeRaw: true });
+  if (includePlayerJson) renderPlayerJson();
+  if (includeMapJson) renderMapJson();
 }
 
 function applyUserForm() {
-  if (!saveData) return;
   const data = new FormData(els.userForm);
-  saveData.user_id = intOrZero(data.get("user_id"));
-  saveData.user_info = saveData.user_info || {};
-  saveData.user_info.name = String(data.get("name") || "");
-  ["cur_level", "xp", "gold", "vip_gold", "vip_level", "icon_index", "total_workers", "total_rooms"].forEach((key) => {
-    saveData.user_info[key] = intOrZero(data.get(key));
+  playerData.user_id = intOrZero(data.get("user_id"));
+  playerData.user_info = normalizeUserInfo({
+    name: data.get("name"),
+    cur_level: data.get("cur_level"),
+    xp: data.get("xp"),
+    gold: data.get("gold"),
+    vip_gold: data.get("vip_gold"),
+    vip_level: data.get("vip_level"),
+    icon_index: data.get("icon_index"),
+    total_workers: data.get("total_workers"),
+    total_rooms: data.get("total_rooms"),
   });
-  renderAll({ includeRaw: true });
+  playerData.exported_at = new Date().toISOString();
+  renderAll({ includeMapJson: false });
 }
 
-async function loadFile(file) {
-  const text = await file.text();
-  let parsed;
+function syncPlayerJson() {
+  if (!playerJsonDirty) return true;
   try {
-    parsed = JSON.parse(text);
+    playerData = normalizePlayerData(JSON.parse(els.playerJsonEditor.value));
+    playerJsonDirty = false;
+    renderAll({ includePlayerJson: false });
+    return true;
   } catch (error) {
-    alert(`JSON 解析失败：${error.message}`);
-    return;
+    alert(`玩家 JSON 解析失败：${error.message}`);
+    return false;
   }
-  loadJsonData(parsed, file.name, null);
 }
 
-async function loadFiles(fileList) {
-  const files = Array.from(fileList || []);
-  if (!files.length) {
-    setImportStatus("没有读取到文件。请直接拖入 userinfo.dat，或同时选中 userinfo.dat 和 map.dat。", "err");
-    return;
+function syncMapJson() {
+  if (!mapJsonDirty) return true;
+  try {
+    mapData = normalizeMapData(JSON.parse(els.mapJsonEditor.value));
+    mapJsonDirty = false;
+    renderAll({ includeMapJson: false });
+    return true;
+  } catch (error) {
+    alert(`地图 JSON 解析失败：${error.message}`);
+    return false;
   }
-  setImportStatus(`读取到 ${files.length} 个文件：${files.map((file) => file.name).slice(0, 6).join("、")}`, "ok");
-  const datFiles = files.filter((file) => file.name.toLowerCase().endsWith(".dat"));
-  if (datFiles.length) {
-    try {
-      const result = await window.MoleDat.datFilesToSave(datFiles);
-      setImportStatus(
-        `DAT 解析成功：${result.report.map((item) => `${item.fileName}=${item.kind}`).join("，")}`,
-        "ok",
-      );
-      loadJsonData(result.save, datFiles.map((file) => file.name).join(" + "), result.report);
-    } catch (error) {
-      const msg = `DAT 读取失败：${error.message}`;
-      setImportStatus(msg, "err");
-      alert(msg);
+}
+
+function syncActiveJson() {
+  return activeTab === "player" ? syncPlayerJson() : syncMapJson();
+}
+
+function setActiveTab(name) {
+  if (!syncActiveJson()) return;
+  activeTab = name;
+  document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
+  document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${name}`));
+  renderSummary();
+  renderValidation();
+}
+
+function downloadJson(data, fileName) {
+  const out = clone(data);
+  out.exported_at = new Date().toISOString();
+  const blob = new Blob([`${JSON.stringify(out, null, 2)}\n`], { type: "application/json;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  URL.revokeObjectURL(a.href);
+  a.remove();
+}
+
+async function importPlayerFile(file) {
+  if (!file) return;
+  try {
+    let next;
+    if (file.name.toLowerCase().endsWith(".dat")) {
+      const result = await window.MoleDat.datFileToData(file);
+      if (result.kind !== "userinfo") throw new Error(`${file.name} 解析为 ${result.kind}，不是玩家数据。`);
+      next = result.player;
+      importReport = `已导入 DAT：${result.report.fileName}=userinfo${result.report.encrypted ? "（已解密）" : ""}`;
+    } else {
+      next = normalizePlayerData(JSON.parse(await file.text()));
+      importReport = `已导入玩家 JSON：${file.name}`;
     }
+    playerData = next;
+    playerFileName = file.name;
+    setImportStatus(`玩家数据导入成功：${file.name}`, "ok");
+    renderAll();
+  } catch (error) {
+    const msg = `玩家数据导入失败：${error.message}`;
+    setImportStatus(msg, "err");
+    alert(msg);
+  }
+}
+
+async function importMapFile(file) {
+  if (!file) return;
+  try {
+    let next;
+    if (file.name.toLowerCase().endsWith(".dat")) {
+      const result = await window.MoleDat.datFileToData(file);
+      if (result.kind !== "map") throw new Error(`${file.name} 解析为 ${result.kind}，不是地图数据。`);
+      next = result.map;
+      importReport = `已导入 DAT：${result.report.fileName}=map${result.report.encrypted ? "（已解密）" : ""}`;
+    } else {
+      next = normalizeMapData(JSON.parse(await file.text()));
+      importReport = `已导入地图 JSON：${file.name}`;
+    }
+    mapData = next;
+    mapFileName = file.name;
+    setImportStatus(`地图数据导入成功：${file.name}`, "ok");
+    renderAll();
+  } catch (error) {
+    const msg = `地图数据导入失败：${error.message}`;
+    setImportStatus(msg, "err");
+    alert(msg);
+  }
+}
+
+function openPasteDialog() {
+  els.mapBase64Input.value = "";
+  if (typeof els.pasteMapDialog.showModal === "function") {
+    els.pasteMapDialog.showModal();
+  } else {
+    els.pasteMapDialog.setAttribute("open", "");
+  }
+}
+
+function closePasteDialog() {
+  if (typeof els.pasteMapDialog.close === "function") {
+    els.pasteMapDialog.close();
+  } else {
+    els.pasteMapDialog.removeAttribute("open");
+  }
+}
+
+async function loadMapBase64() {
+  const value = els.mapBase64Input.value.trim();
+  if (!value) {
+    setImportStatus("请先粘贴 map base64。", "err");
     return;
   }
-  await loadFile(files[0]);
+  els.loadMapBase64Btn.disabled = true;
+  setImportStatus("正在解析粘贴的 map base64...");
+  try {
+    const result = await window.MoleDat.decodeMapBase64(value);
+    mapData = normalizeMapData({
+      source: "pasted-map-base64",
+      map_blob_b64: result.map_blob_b64,
+      objects: result.objects,
+    });
+    mapFileName = "pasted-map-base64";
+    importReport = `已粘贴地图：map，${result.objects.length} 个对象，blob ${formatNumber(result.report.blobBytes)} B`;
+    setImportStatus(`map base64 解析成功：${result.objects.length} 个对象。`, "ok");
+    closePasteDialog();
+    setActiveTab("map");
+    renderAll();
+  } catch (error) {
+    const msg = `map base64 解析失败：${error.message}`;
+    setImportStatus(msg, "err");
+    alert(msg);
+  } finally {
+    els.loadMapBase64Btn.disabled = false;
+  }
 }
 
-function readEntryFile(entry) {
-  return new Promise((resolve, reject) => {
-    entry.file(resolve, reject);
-  });
+async function readEntryFile(entry) {
+  return new Promise((resolve, reject) => entry.file(resolve, reject));
 }
 
-function readDirectoryEntries(reader) {
-  return new Promise((resolve, reject) => {
-    reader.readEntries(resolve, reject);
-  });
+async function readDirectoryEntries(reader) {
+  return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
 }
 
 async function collectEntryFiles(entry, out = []) {
@@ -486,15 +552,10 @@ async function filesFromDrop(event) {
   const files = [];
   for (const item of items) {
     if (item.kind !== "file") continue;
-    try {
-      const entry = item.webkitGetAsEntry?.();
-      if (entry) {
-        await collectEntryFiles(entry, files);
-      } else {
-        const file = item.getAsFile?.();
-        if (file) files.push(file);
-      }
-    } catch {
+    const entry = item.webkitGetAsEntry?.();
+    if (entry) {
+      await collectEntryFiles(entry, files);
+    } else {
       const file = item.getAsFile?.();
       if (file) files.push(file);
     }
@@ -502,65 +563,112 @@ async function filesFromDrop(event) {
   return files.length ? files : Array.from(event.dataTransfer?.files || []);
 }
 
-function loadJsonData(parsed, name = "浏览器内存", report = null) {
-  saveData = parsed;
-  activeFileName = name;
-  importReport = report;
-  originalMapBlobState = {
-    present: Object.prototype.hasOwnProperty.call(saveData?.user_info || {}, "map_blob_b64"),
-    value: saveData?.user_info?.map_blob_b64,
-  };
-  if (els.emptyState) els.emptyState.hidden = true;
-  els.editorShell.hidden = false;
+async function importDroppedFiles(files) {
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  const dats = list.filter((file) => file.name.toLowerCase().endsWith(".dat"));
+  if (dats.length) {
+    let imported = 0;
+    for (const file of dats) {
+      const result = await window.MoleDat.datFileToData(file);
+      if (result.kind === "userinfo") {
+        playerData = result.player;
+        playerFileName = file.name;
+        imported += 1;
+      } else if (result.kind === "map") {
+        mapData = result.map;
+        mapFileName = file.name;
+        imported += 1;
+      }
+    }
+    importReport = `拖入 DAT 已识别 ${imported} 个文件。`;
+    setImportStatus(importReport, "ok");
+    renderAll();
+    return;
+  }
+  if (activeTab === "player") {
+    await importPlayerFile(list[0]);
+  } else {
+    await importMapFile(list[0]);
+  }
+}
+
+function loadSample() {
+  playerData = normalizePlayerData({
+    user_id: 100001,
+    user_info: {
+      name: "测试摩尔",
+      cur_level: 12,
+      xp: 3456,
+      gold: 7890,
+      vip_gold: 123,
+      vip_level: 2,
+      icon_index: 5,
+      total_workers: 8,
+      total_rooms: 3,
+    },
+    source: "sample",
+  });
+  mapData = normalizeMapData({
+    source: "sample",
+    map_blob_b64: null,
+    objects: [
+      { scene_id: 1, obj_kind: 0, key_id: 1, obj_id: 4001, seq_id: 1, enc_mapdata_b64: writeEncMapdata(13, 5, true) },
+      { scene_id: 1, obj_kind: 0, key_id: 2, obj_id: 5001, seq_id: 2, enc_mapdata_b64: writeEncMapdata(9, 18, false) },
+      { scene_id: 1, obj_kind: 0, key_id: 3, obj_id: 6002, seq_id: 3, enc_mapdata_b64: writeEncMapdata(23, 21, false) },
+      { scene_id: 1, obj_kind: 0, key_id: 4, obj_id: 14245, seq_id: 4, enc_mapdata_b64: writeEncMapdata(18, 12, false) },
+      { scene_id: 1, obj_kind: 0, key_id: 5, obj_id: 15001, seq_id: 5, enc_mapdata_b64: writeEncMapdata(3, 17, false) },
+    ],
+  });
+  playerFileName = "sample-player.json";
+  mapFileName = "sample-map.json";
+  importReport = "已载入示例玩家数据和地图数据。";
+  setImportStatus(importReport, "ok");
   renderAll();
 }
 
-function syncRawJson() {
-  if (!rawDirty) return true;
-  try {
-    saveData = JSON.parse(els.jsonEditor.value);
-    rawDirty = false;
-    renderAll({ includeRaw: false });
-    return true;
-  } catch (error) {
-    alert(`原始 JSON 解析失败：${error.message}`);
-    return false;
-  }
-}
-
-function setActiveTab(name) {
-  if (!syncRawJson()) return;
-  document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
-  document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${name}`));
-}
-
-function downloadSave() {
-  if (!syncRawJson()) return;
-  const { errors } = validateSave(saveData);
-  if (errors.length) {
-    renderValidation();
-    return;
-  }
-  const out = clone(saveData);
-  if (!out.exported_at) out.exported_at = new Date().toISOString();
-  const blob = new Blob([`${JSON.stringify(out, null, 2)}\n`], { type: "application/json;charset=utf-8" });
-  const a = document.createElement("a");
-  const safeId = out.user_id ?? "save";
-  a.href = URL.createObjectURL(blob);
-  a.download = `moleworld-save-${safeId}-edited.json`;
-  document.body.appendChild(a);
-  a.click();
-  URL.revokeObjectURL(a.href);
-  a.remove();
-}
-
-els.fileInput.addEventListener("change", (event) => {
-  loadFiles(event.target.files);
+els.playerFileInput.addEventListener("change", (event) => {
+  importPlayerFile(event.target.files?.[0]);
+  event.target.value = "";
 });
 
-els.folderInput.addEventListener("change", (event) => {
-  loadFiles(event.target.files);
+els.mapFileInput.addEventListener("change", (event) => {
+  importMapFile(event.target.files?.[0]);
+  event.target.value = "";
 });
+
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => setActiveTab(tab.dataset.tab));
+});
+
+els.userForm.addEventListener("change", applyUserForm);
+els.playerJsonEditor.addEventListener("input", () => {
+  playerJsonDirty = true;
+});
+els.mapJsonEditor.addEventListener("input", () => {
+  mapJsonDirty = true;
+});
+els.formatPlayerJsonBtn.addEventListener("click", () => {
+  if (syncPlayerJson()) renderPlayerJson();
+});
+els.formatMapJsonBtn.addEventListener("click", () => {
+  if (syncMapJson()) renderMapJson();
+});
+els.exportPlayerBtn.addEventListener("click", () => {
+  if (!syncPlayerJson()) return;
+  const { errors } = validatePlayer();
+  renderValidation();
+  if (!errors.length) downloadJson(playerData, `moleworld-player-${playerData.user_id || "new"}.json`);
+});
+els.exportMapBtn.addEventListener("click", () => {
+  if (!syncMapJson()) return;
+  const { errors } = validateMap();
+  renderValidation();
+  if (!errors.length) downloadJson(mapData, "moleworld-map.json");
+});
+els.openPasteMapBtn.addEventListener("click", openPasteDialog);
+els.loadMapBase64Btn.addEventListener("click", loadMapBase64);
+els.sampleBtn.addEventListener("click", loadSample);
 
 ["dragenter", "dragover"].forEach((eventName) => {
   document.addEventListener(eventName, (event) => {
@@ -579,8 +687,7 @@ els.folderInput.addEventListener("change", (event) => {
 document.addEventListener("drop", async (event) => {
   try {
     setImportStatus("正在读取拖入内容...");
-    const files = await filesFromDrop(event);
-    await loadFiles(files);
+    await importDroppedFiles(await filesFromDrop(event));
   } catch (error) {
     const msg = `拖放读取失败：${error.message}`;
     setImportStatus(msg, "err");
@@ -588,161 +695,23 @@ document.addEventListener("drop", async (event) => {
   }
 });
 
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => setActiveTab(tab.dataset.tab));
-});
-
-els.userForm.addEventListener("change", applyUserForm);
-els.downloadBtn.addEventListener("click", downloadSave);
-els.jsonEditor.addEventListener("input", () => {
-  rawDirty = true;
-});
-
-els.formatJsonBtn.addEventListener("click", () => {
-  if (syncRawJson()) renderJson();
-});
-
-els.keepMapBtn.addEventListener("click", () => {
-  saveData.user_info = saveData.user_info || {};
-  if (originalMapBlobState.present) {
-    saveData.user_info.map_blob_b64 = originalMapBlobState.value;
-  } else {
-    delete saveData.user_info.map_blob_b64;
-  }
-  syncAfterEdit();
-});
-
-els.clearMapBtn.addEventListener("click", () => {
-  saveData.user_info = saveData.user_info || {};
-  saveData.user_info.map_blob_b64 = null;
-  syncAfterEdit();
-});
-
-els.loadMapBase64Btn.addEventListener("click", async () => {
-  const value = els.mapBase64Input.value.trim();
-  if (!value) {
-    setImportStatus("请先粘贴 map base64。", "err");
-    return;
-  }
-  els.loadMapBase64Btn.disabled = true;
-  setImportStatus("正在解析粘贴的 map base64...");
-  try {
-    const result = await window.MoleDat.decodeMapBase64(value);
-    saveData.user_info = saveData.user_info || {};
-    saveData.user_info.map_blob_b64 = result.map_blob_b64;
-    saveData.objects = result.objects;
-    originalMapBlobState = { present: true, value: result.map_blob_b64 };
-    importReport = [{
-      fileName: "pasted-map-base64",
-      kind: result.report.kind,
-      encrypted: result.report.encrypted,
-      plistBytes: result.report.plistBytes,
-    }];
-    rawDirty = false;
-    renderAll();
-    setImportStatus(
-      `map base64 解析成功：${result.objects.length} 个对象，blob ${formatNumber(result.report.blobBytes)} B。`,
-      "ok",
-    );
-  } catch (error) {
-    const msg = `map base64 解析失败：${error.message}`;
-    setImportStatus(msg, "err");
-    alert(msg);
-  } finally {
-    els.loadMapBase64Btn.disabled = false;
-  }
-});
-
-els.addObjectBtn.addEventListener("click", () => {
-  saveData.objects = saveData.objects || [];
-  const seq = Date.now();
-  saveData.objects.push({
-    scene_id: 1,
-    obj_kind: 0,
-    key_id: seq,
-    obj_id: 4001,
-    seq_id: seq,
-    enc_mapdata_b64: writeEncMapdata("", 0, 0, false),
-  });
-  syncAfterEdit();
-});
-
-els.sampleBtn.addEventListener("click", () => {
-  loadJsonData(
-    {
-      format: SAVE_FORMAT,
-      version: SAVE_VERSION,
-      exported_at: new Date().toISOString(),
-      source: "sample",
-      user_id: 100001,
-      user_info: {
-        name: "测试摩尔",
-        cur_level: 12,
-        xp: 3456,
-        gold: 7890,
-        vip_gold: 123,
-        vip_level: 2,
-        icon_index: 5,
-        total_workers: 8,
-        total_rooms: 3,
-        map_blob_b64: null,
-      },
-      objects: [
-        {
-          scene_id: 1,
-          obj_kind: 0,
-          key_id: 1,
-          obj_id: 4001,
-          seq_id: 1,
-          enc_mapdata_b64: writeEncMapdata("", 13, 5, true),
-        },
-        {
-          scene_id: 1,
-          obj_kind: 0,
-          key_id: 2,
-          obj_id: 5001,
-          seq_id: 2,
-          enc_mapdata_b64: writeEncMapdata("", 9, 18, false),
-        },
-        {
-          scene_id: 1,
-          obj_kind: 0,
-          key_id: 3,
-          obj_id: 6002,
-          seq_id: 3,
-          enc_mapdata_b64: writeEncMapdata("", 23, 21, false),
-        },
-        {
-          scene_id: 1,
-          obj_kind: 0,
-          key_id: 4,
-          obj_id: 14245,
-          seq_id: 4,
-          enc_mapdata_b64: writeEncMapdata("", 18, 12, false),
-        },
-        {
-          scene_id: 1,
-          obj_kind: 0,
-          key_id: 5,
-          obj_id: 15001,
-          seq_id: 5,
-          enc_mapdata_b64: writeEncMapdata("", 3, 17, false),
-        },
-      ],
-      social: { friends: [] },
-      progress: { redeems: [] },
-    },
-    "sample-save.json",
-  );
-});
-
-loadJsonData(createEmptySave(), "新建存档", null);
+renderAll();
 
 window.MoleDataEditor = {
-  loadJson(data, name) {
-    loadJsonData(clone(data), name);
+  loadPlayer(data, name = "browser-player") {
+    playerData = normalizePlayerData(clone(data));
+    playerFileName = name;
+    renderAll();
   },
-  getSave() {
-    return clone(saveData);
+  loadMap(data, name = "browser-map") {
+    mapData = normalizeMapData(clone(data));
+    mapFileName = name;
+    renderAll();
+  },
+  getPlayer() {
+    return clone(playerData);
+  },
+  getMap() {
+    return clone(mapData);
   },
 };
