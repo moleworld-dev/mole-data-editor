@@ -22,6 +22,8 @@
   const MAP_LEFT_BEACH_WIDTH = 725;
   const MAP_LEFT_SEA_COLOR = [83 / 255, 175 / 255, 203 / 255, 1];
   const MAP_LEFT_BEACH_COLOR = [227 / 255, 208 / 255, 146 / 255, 1];
+  const MAP_BOUND_PADDING = 36;
+  const MAP_MAX_ZOOM = 1.8;
   const BACKGROUND_LAYER_X = 0;
   const BACKGROUND_LAYER_Y = 0;
   const PROPERTY_TABLES = new Set(["property", "propertyHV"]);
@@ -494,6 +496,61 @@
     }
   }
 
+  function includeBounds(bounds, minX, minY, maxX, maxY) {
+    bounds.minX = Math.min(bounds.minX, minX);
+    bounds.minY = Math.min(bounds.minY, minY);
+    bounds.maxX = Math.max(bounds.maxX, maxX);
+    bounds.maxY = Math.max(bounds.maxY, maxY);
+  }
+
+  function movementBounds() {
+    const bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+    const mapSprites = state.showMap ? state.backgroundSprites : [];
+    for (const sprite of mapSprites) {
+      includeBounds(bounds, sprite.x, sprite.y, sprite.x + sprite.width, sprite.y + sprite.height);
+    }
+    if (mapSprites.length) {
+      includeBounds(bounds, MAP_LEFT_SEA_X, bounds.minY, MAP_LEFT_BEACH_X + MAP_LEFT_BEACH_WIDTH, bounds.maxY);
+    }
+    if (!Number.isFinite(bounds.minX)) {
+      for (const sprite of state.sprites) {
+        includeBounds(bounds, sprite.x, sprite.y, sprite.x + sprite.width, sprite.y + sprite.height);
+      }
+    }
+    if (!Number.isFinite(bounds.minX)) {
+      includeBounds(bounds, MAP_INITIAL_VIEW_X, MAP_INITIAL_VIEW_Y, MAP_INITIAL_VIEW_X + MAP_INIT_WIDTH, MAP_INITIAL_VIEW_Y + MAP_INIT_HEIGHT);
+    }
+    return {
+      minX: bounds.minX - MAP_BOUND_PADDING,
+      minY: bounds.minY - MAP_BOUND_PADDING,
+      maxX: bounds.maxX + MAP_BOUND_PADDING,
+      maxY: bounds.maxY + MAP_BOUND_PADDING,
+    };
+  }
+
+  function clampPanAxis(value, minWorld, maxWorld, viewSize) {
+    const minPan = viewSize - maxWorld * state.zoom;
+    const maxPan = -minWorld * state.zoom;
+    if (minPan > maxPan) return viewSize / 2 - ((minWorld + maxWorld) / 2) * state.zoom;
+    return Math.max(minPan, Math.min(maxPan, value));
+  }
+
+  function minMapZoom(bounds = movementBounds()) {
+    const height = Math.max(1, bounds.maxY - bounds.minY);
+    return Math.min(MAP_MAX_ZOOM, state.canvas.height / height);
+  }
+
+  function clampZoom(bounds = movementBounds()) {
+    state.zoom = Math.max(minMapZoom(bounds), Math.min(MAP_MAX_ZOOM, state.zoom));
+  }
+
+  function clampPan() {
+    const bounds = movementBounds();
+    clampZoom(bounds);
+    state.panX = clampPanAxis(state.panX, bounds.minX, bounds.maxX, state.canvas.width);
+    state.panY = clampPanAxis(state.panY, bounds.minY, bounds.maxY, state.canvas.height);
+  }
+
   async function textureFor(src) {
     if (state.textureCache.has(src)) return state.textureCache.get(src);
     const image = await loadImage(src);
@@ -633,6 +690,7 @@
     if (!state.gl) return;
     resizeCanvas();
     if (state.needsFit) fit();
+    clampPan();
     const gl = state.gl;
     if (state.showMap) {
       gl.clearColor(MAP_GROUND_COLOR[0], MAP_GROUND_COLOR[1], MAP_GROUND_COLOR[2], MAP_GROUND_COLOR[3]);
@@ -695,9 +753,10 @@
       if (state.showMap && state.backgroundSprites.length) {
         fitRect(MAP_INITIAL_VIEW_X, MAP_INITIAL_VIEW_Y, MAP_INITIAL_VIEW_X + MAP_INIT_WIDTH, MAP_INITIAL_VIEW_Y + MAP_INIT_HEIGHT, 80, 70);
       } else {
-        state.zoom = Math.min(1.8, Math.max(0.6, state.canvas.width / 900));
+        state.zoom = Math.min(MAP_MAX_ZOOM, Math.max(0.6, state.canvas.width / 900));
         state.panX = state.canvas.width / 2;
         state.panY = state.canvas.height / 2;
+        clampPan();
       }
       return;
     }
@@ -719,9 +778,11 @@
   function fitRect(minX, minY, maxX, maxY, padX, padY) {
     const width = Math.max(1, maxX - minX);
     const height = Math.max(1, maxY - minY);
-    state.zoom = Math.max(0.18, Math.min(3, Math.min(state.canvas.width / (width + padX), state.canvas.height / (height + padY))));
+    state.zoom = Math.min(MAP_MAX_ZOOM, Math.min(state.canvas.width / (width + padX), state.canvas.height / (height + padY)));
+    clampZoom();
     state.panX = state.canvas.width / 2 - ((minX + maxX) / 2) * state.zoom;
     state.panY = state.canvas.height / 2 - ((minY + maxY) / 2) * state.zoom;
+    clampPan();
   }
 
   function screenToWorld(clientX, clientY) {
@@ -821,7 +882,8 @@
       event.preventDefault();
       const before = screenToWorld(event.clientX, event.clientY);
       const factor = event.deltaY < 0 ? 1.12 : 0.89;
-      state.zoom = Math.max(0.16, Math.min(4, state.zoom * factor));
+      state.zoom *= factor;
+      clampZoom();
       state.panX = before.sx - before.x * state.zoom;
       state.panY = before.sy - before.y * state.zoom;
       draw();
