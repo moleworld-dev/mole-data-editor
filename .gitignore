@@ -2,4 +2,7 @@
 Thumbs.db
 node_modules/
 dist/
+exported-assets/
+bin/
+obj/
 *.log
