@@ -15,6 +15,7 @@ let playerFileName = "新建玩家数据";
 let mapFileName = "新建地图数据";
 let importReport = null;
 let selectedObjectIndex = null;
+let selectedObjectSnapshot = null;
 let objectCatalog = [];
 let objectCatalogById = new Map();
 let renderingSelectedObject = false;
@@ -174,6 +175,11 @@ function objectPlacementAt(index) {
 
 function selectedObject() {
   return Number.isInteger(selectedObjectIndex) ? mapData.objects?.[selectedObjectIndex] || null : null;
+}
+
+function clearMapSelection() {
+  selectedObjectIndex = null;
+  selectedObjectSnapshot = null;
 }
 
 function normalizeUserInfo(input = {}) {
@@ -511,6 +517,9 @@ function syncMapJson() {
 function selectObject(index, options = {}) {
   const count = mapData.objects?.length || 0;
   selectedObjectIndex = Number.isInteger(index) && index >= 0 && index < count ? index : null;
+  selectedObjectSnapshot = selectedObjectIndex == null
+    ? null
+    : (options.snapshot === null ? null : clone(mapData.objects[selectedObjectIndex]));
   renderObjectsTable();
   renderSelectedObjectPanel();
   renderMap({ preserveView: options.preserveView !== false });
@@ -550,11 +559,31 @@ function rotateSelectedObject() {
   updateObjectAt(selectedObjectIndex, { flip: !placement.flip });
 }
 
+function confirmSelectedObject() {
+  if (!selectedObject()) return;
+  selectedObjectIndex = null;
+  selectedObjectSnapshot = null;
+  renderMapEditing({ preserveView: true });
+}
+
+function cancelSelectedObject() {
+  if (selectedObjectIndex == null) return;
+  if (selectedObjectSnapshot) {
+    mapData.objects[selectedObjectIndex] = normalizeObject(selectedObjectSnapshot, selectedObjectIndex);
+  } else if (mapData.objects[selectedObjectIndex]) {
+    mapData.objects.splice(selectedObjectIndex, 1);
+  }
+  selectedObjectIndex = null;
+  selectedObjectSnapshot = null;
+  mapData.exported_at = new Date().toISOString();
+  renderMapEditing({ preserveView: true });
+}
+
 function deleteSelectedObject() {
   if (!selectedObject()) return;
   const removed = mapData.objects.splice(selectedObjectIndex, 1)[0];
-  selectedObjectIndex = Math.min(selectedObjectIndex, mapData.objects.length - 1);
-  if (selectedObjectIndex < 0) selectedObjectIndex = null;
+  selectedObjectIndex = null;
+  selectedObjectSnapshot = null;
   mapData.exported_at = new Date().toISOString();
   setImportStatus(`已删除对象 ${removed.obj_id}。`, "ok");
   renderMapEditing();
@@ -579,6 +608,7 @@ function addObjectFromInputs() {
   }, objects.length);
   objects.push(next);
   selectedObjectIndex = objects.length - 1;
+  selectedObjectSnapshot = null;
   mapData.exported_at = new Date().toISOString();
   setImportStatus(`已添加对象 ${objectName(objId)}。`, "ok");
   renderMapEditing({ preserveView: true });
@@ -679,6 +709,7 @@ async function importMapFile(file) {
       next = normalizeMapData(JSON.parse(await file.text()));
       importReport = `已导入地图 JSON：${file.name}`;
     }
+    clearMapSelection();
     mapData = next;
     mapFileName = file.name;
     setImportStatus(`地图数据导入成功：${file.name}`, "ok");
@@ -722,6 +753,7 @@ async function loadMapBase64() {
       map_blob_b64: result.map_blob_b64,
       objects: result.objects,
     });
+    clearMapSelection();
     mapFileName = "pasted-map-base64";
     importReport = `已粘贴地图：map，${result.objects.length} 个对象，blob ${formatNumber(result.report.blobBytes)} B`;
     setImportStatus(`map base64 解析成功：${result.objects.length} 个对象。`, "ok");
@@ -792,6 +824,7 @@ async function importDroppedFiles(files) {
         playerFileName = file.name;
         imported += 1;
       } else if (result.kind === "map") {
+        clearMapSelection();
         mapData = result.map;
         mapFileName = file.name;
         imported += 1;
@@ -810,6 +843,7 @@ async function importDroppedFiles(files) {
 }
 
 function loadSample() {
+  clearMapSelection();
   playerData = normalizePlayerData({
     user_id: 100001,
     user_info: {
@@ -935,6 +969,18 @@ window.ManorPreview?.configureEditor?.({
       preserveView: true,
     });
   },
+  onConfirm() {
+    confirmSelectedObject();
+  },
+  onRotate() {
+    rotateSelectedObject();
+  },
+  onCancel() {
+    cancelSelectedObject();
+  },
+  onDelete() {
+    deleteSelectedObject();
+  },
 });
 
 renderAll();
@@ -947,6 +993,7 @@ window.MoleDataEditor = {
     renderAll();
   },
   loadMap(data, name = "browser-map") {
+    clearMapSelection();
     mapData = normalizeMapData(clone(data));
     mapFileName = name;
     renderAll();

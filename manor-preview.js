@@ -29,6 +29,14 @@
     { expand: 14, color: [1, 0.82, 0.18, 0.22] },
     { expand: 7, color: [1, 0.95, 0.48, 0.34] },
   ];
+  const UI_BUTTON_SIZE = 58;
+  const UI_BUTTON_GAP = 10;
+  const UI_ACTIONS = [
+    { id: "confirm", frame: "editconfirm1.png", texture: "buttonsiPhone.pvr.ccz" },
+    { id: "rotate", frame: "editflip1.png", texture: "buttonsiPhone.pvr.ccz" },
+    { id: "cancel", frame: "editdelete1.png", texture: "buttonsiPhone.pvr.ccz" },
+    { id: "delete", frame: "editstore1.png", texture: "buttonsiPhone.pvr.ccz" },
+  ];
   const BACKGROUND_LAYER_X = 0;
   const BACKGROUND_LAYER_Y = 0;
   const PROPERTY_TABLES = new Set(["property", "propertyHV"]);
@@ -56,6 +64,8 @@
     mapBtn: null,
     gridBtn: null,
     missingBtn: null,
+    uiAssets: new Map(),
+    uiButtons: [],
     showMap: true,
     showGrid: false,
     showMissing: true,
@@ -66,11 +76,14 @@
     pointer: null,
     hovered: null,
     selectedIndex: null,
-    objectDragging: null,
     editor: {
       enabled: false,
       onSelect: null,
       onMove: null,
+      onConfirm: null,
+      onRotate: null,
+      onCancel: null,
+      onDelete: null,
     },
     needsFit: true,
   };
@@ -212,7 +225,17 @@
     for (const info of state.objectInfo.values()) {
       info.md5FrameName = `${md5(info.id)}.png`;
     }
+    state.uiAssets = buildUiAssets(frames);
     state.backgroundSprites = buildBackgroundSprites(backgroundRows);
+  }
+
+  function buildUiAssets(frames) {
+    const byId = new Map();
+    for (const action of UI_ACTIONS) {
+      const frame = frames.find((item) => item.frame_name === action.frame && item.texture === action.texture);
+      if (frame) byId.set(action.id, assetFromFrame(frame));
+    }
+    return byId;
   }
 
   function standaloneAsset(info) {
@@ -644,6 +667,30 @@
     return out;
   }
 
+  function footprintOutlineVertices(sprite, color) {
+    const p = sprite.base;
+    const w = Math.max(TILE_WIDTH, (sprite.lengthX + sprite.lengthY) * HALF_TILE_WIDTH);
+    const h = Math.max(TILE_HEIGHT, (sprite.lengthX + sprite.lengthY) * HALF_TILE_HEIGHT);
+    const x0 = p.x - w * 0.5;
+    const x1 = p.x + w * 0.5;
+    const y0 = p.y - h;
+    const yMid = p.y - h * 0.5;
+    const y1 = p.y;
+    const points = [
+      [p.x, y0],
+      [x1, yMid],
+      [x1, yMid],
+      [p.x, y1],
+      [p.x, y1],
+      [x0, yMid],
+      [x0, yMid],
+      [p.x, y0],
+    ];
+    const out = [];
+    for (const point of points) pushVertex(out, point[0], point[1], 0, 0, color);
+    return out;
+  }
+
   function rectVertices(x, y, width, height, color) {
     const out = [];
     const x1 = x + width;
@@ -747,8 +794,10 @@
 
     const selected = state.sprites.find((sprite) => sprite.row.index === state.selectedIndex);
     if (selected) {
-      const data = footprintVertices(selected, [1, 0.78, 0.18, 0.48]);
-      drawBuffer(state.programs.color, state.buffers.color, data, gl.TRIANGLES, 6);
+      const fillData = footprintVertices(selected, [0.0, 0.95, 0.82, 0.24]);
+      const outlineData = footprintOutlineVertices(selected, [0.05, 1.0, 0.82, 0.95]);
+      drawBuffer(state.programs.color, state.buffers.color, fillData, gl.TRIANGLES, 6);
+      drawBuffer(state.programs.color, state.buffers.color, outlineData, gl.LINES, outlineData.length / 8);
     }
 
     const sorted = state.sprites.slice().sort((a, b) => a.sortY - b.sortY || num(a.row.seq_id) - num(b.row.seq_id));
@@ -772,6 +821,8 @@
         drawBuffer(state.programs.color, state.buffers.color, data, gl.TRIANGLES, 6);
       }
     }
+    updateUiButtons();
+    await drawUiButtons();
   }
 
   function fit() {
@@ -830,6 +881,98 @@
     return Math.round(num(value));
   }
 
+  function worldToPlacement(world) {
+    const column = roundPlacement((world.x - ORIGIN_TILE_X) / HALF_TILE_WIDTH);
+    const parityOffset = (Math.abs(Math.trunc(column)) % 2) * HALF_TILE_HEIGHT;
+    const line = roundPlacement((world.y - ORIGIN_TILE_Y - HALF_TILE_HEIGHT + parityOffset) / TILE_HEIGHT);
+    return {
+      x: line,
+      y: column,
+    };
+  }
+
+  function worldToCanvasCss(point) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    return {
+      x: (point.x * state.zoom + state.panX) / dpr,
+      y: (point.y * state.zoom + state.panY) / dpr,
+    };
+  }
+
+  function canvasCssToWorld(x, y) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    return {
+      x: (x * dpr - state.panX) / state.zoom,
+      y: (y * dpr - state.panY) / state.zoom,
+    };
+  }
+
+  function updateUiButtons() {
+    const selected = state.sprites.find((sprite) => sprite.row.index === state.selectedIndex);
+    state.canvas.classList.toggle("placing-object", !!selected);
+    if (!selected) {
+      state.uiButtons = [];
+      return;
+    }
+    const point = worldToCanvasCss({
+      x: selected.x + selected.width * 0.5,
+      y: selected.y + selected.height + 12,
+    });
+    const totalWidth = UI_ACTIONS.length * UI_BUTTON_SIZE + (UI_ACTIONS.length - 1) * UI_BUTTON_GAP;
+    const maxX = Math.max(8, state.canvas.clientWidth - totalWidth - 8);
+    const maxY = Math.max(8, state.canvas.clientHeight - UI_BUTTON_SIZE - 8);
+    const startX = Math.max(8, Math.min(maxX, point.x - totalWidth * 0.5));
+    const top = Math.max(8, Math.min(maxY, point.y));
+    state.uiButtons = UI_ACTIONS.map((action, index) => ({
+      id: action.id,
+      asset: state.uiAssets.get(action.id),
+      x: startX + index * (UI_BUTTON_SIZE + UI_BUTTON_GAP),
+      y: top,
+      width: UI_BUTTON_SIZE,
+      height: UI_BUTTON_SIZE,
+    })).filter((button) => button.asset);
+  }
+
+  function uiButtonVertices(button, texture) {
+    const p0 = canvasCssToWorld(button.x, button.y);
+    const p1 = canvasCssToWorld(button.x + button.width, button.y + button.height);
+    const corners = [
+      [p0.x, p0.y],
+      [p1.x, p0.y],
+      [p1.x, p1.y],
+      [p0.x, p1.y],
+    ];
+    const uvs = uvCorners(button.asset, texture);
+    const out = [];
+    for (const index of [0, 1, 2, 0, 2, 3]) {
+      pushVertex(out, corners[index][0], corners[index][1], uvs[index][0], uvs[index][1], [1, 1, 1, 1]);
+    }
+    return out;
+  }
+
+  async function drawUiButtons() {
+    if (!state.uiButtons.length) return;
+    for (const button of state.uiButtons) {
+      try {
+        const texture = await textureFor(button.asset.src);
+        const data = uiButtonVertices(button, texture);
+        drawBuffer(state.programs.texture, state.buffers.texture, data, state.gl.TRIANGLES, 6, texture.texture);
+      } catch {
+        // Missing UI art should not break map rendering.
+      }
+    }
+  }
+
+  function pickUiButton(clientX, clientY) {
+    if (!state.uiButtons.length) return null;
+    const rect = state.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    return state.uiButtons.find((button) => (
+      x >= button.x && x <= button.x + button.width && y >= button.y && y <= button.y + button.height
+    )) || null;
+  }
+
   function pick(clientX, clientY) {
     const p = screenToWorld(clientX, clientY);
     const sorted = state.sprites.slice().sort((a, b) => b.sortY - a.sortY);
@@ -863,48 +1006,20 @@
     `;
   }
 
-  function beginObjectDrag(event, sprite) {
-    const placement = sprite.row.placement || {};
-    const world = screenToWorld(event.clientX, event.clientY);
+  function selectPreviewObject(sprite) {
     state.selectedIndex = sprite.row.index;
-    state.objectDragging = {
-      pointerId: event.pointerId,
-      index: sprite.row.index,
-      startWorld: world,
-      startPlacement: {
-        x: num(placement.x),
-        y: num(placement.y),
-        flip: !!placement.flip,
-      },
-      current: {
-        x: num(placement.x),
-        y: num(placement.y),
-        flip: !!placement.flip,
-      },
-    };
     state.editor.onSelect?.(sprite.row.index, sprite.row);
-    state.canvas.classList.add("moving-object");
     draw();
   }
 
-  function updateObjectDrag(event, final = false) {
-    const drag = state.objectDragging;
-    if (!drag) return;
-    const world = screenToWorld(event.clientX, event.clientY);
-    const next = {
-      x: roundPlacement(drag.startPlacement.x + (world.y - drag.startWorld.y) / TILE_HEIGHT),
-      y: roundPlacement(drag.startPlacement.y + (world.x - drag.startWorld.x) / HALF_TILE_WIDTH),
-      flip: drag.startPlacement.flip,
-    };
-    drag.current = next;
-    state.editor.onMove?.(drag.index, next, { final });
-  }
-
-  function finishObjectDrag(event) {
-    if (!state.objectDragging) return;
-    updateObjectDrag(event, true);
-    state.objectDragging = null;
-    state.canvas.classList.remove("moving-object");
+  function placeSelectedAt(event) {
+    const selected = state.sprites.find((sprite) => sprite.row.index === state.selectedIndex);
+    if (!selected) return;
+    const placement = selected.row.placement || {};
+    state.editor.onMove?.(selected.row.index, {
+      ...worldToPlacement(screenToWorld(event.clientX, event.clientY)),
+      flip: !!placement.flip,
+    }, { final: true });
   }
 
   function attachEvents() {
@@ -931,8 +1046,22 @@
     state.canvas.addEventListener("pointerdown", (event) => {
       state.canvas.setPointerCapture(event.pointerId);
       const picked = pick(event.clientX, event.clientY);
-      if (state.editor.enabled && picked) {
-        beginObjectDrag(event, picked);
+      if (state.editor.enabled) {
+        const uiButton = pickUiButton(event.clientX, event.clientY);
+        if (uiButton) {
+          if (uiButton.id === "confirm") state.editor.onConfirm?.(state.selectedIndex);
+          if (uiButton.id === "rotate") state.editor.onRotate?.(state.selectedIndex);
+          if (uiButton.id === "cancel") state.editor.onCancel?.(state.selectedIndex);
+          if (uiButton.id === "delete") state.editor.onDelete?.(state.selectedIndex);
+        } else if (state.selectedIndex != null) {
+          placeSelectedAt(event);
+        } else if (picked) {
+          selectPreviewObject(picked);
+        } else {
+          state.dragging = true;
+          state.pointer = { x: event.clientX, y: event.clientY, panX: state.panX, panY: state.panY };
+          state.canvas.classList.add("dragging");
+        }
         event.preventDefault();
         return;
       }
@@ -941,12 +1070,6 @@
       state.canvas.classList.add("dragging");
     });
     state.canvas.addEventListener("pointermove", (event) => {
-      if (state.objectDragging) {
-        updateObjectDrag(event, false);
-        state.hovered = state.sprites.find((sprite) => sprite.row.index === state.objectDragging.index) || null;
-        renderTooltip(event);
-        return;
-      }
       if (state.dragging && state.pointer) {
         const dpr = Math.min(2, window.devicePixelRatio || 1);
         state.panX = state.pointer.panX + (event.clientX - state.pointer.x) * dpr;
@@ -956,17 +1079,14 @@
       state.hovered = pick(event.clientX, event.clientY);
       renderTooltip(event);
     });
-    state.canvas.addEventListener("pointerup", (event) => {
-      finishObjectDrag(event);
+    state.canvas.addEventListener("pointerup", () => {
       state.dragging = false;
       state.canvas.classList.remove("dragging");
     });
     state.canvas.addEventListener("pointerleave", () => {
-      if (state.objectDragging) return;
       state.dragging = false;
       state.hovered = null;
       state.canvas.classList.remove("dragging");
-      state.canvas.classList.remove("moving-object");
       if (state.tooltip) state.tooltip.hidden = true;
     });
     state.canvas.addEventListener("wheel", (event) => {

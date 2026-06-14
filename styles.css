@@ -362,8 +362,8 @@ button:disabled {
   cursor: grabbing;
 }
 
-#objectMap.moving-object {
-  cursor: move;
+#objectMap.placing-object {
+  cursor: crosshair;
 }
 
 .map-edit-bar {
