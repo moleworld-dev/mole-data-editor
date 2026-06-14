@@ -223,6 +223,69 @@ function isPlaceableObject(item) {
   return (shopType === 1 || shopType === 2) && shopSubType >= 1 && shopSubType <= 6 && lengthX > 0 && lengthY > 0;
 }
 
+function cocoaNowSeconds() {
+  return Date.now() / 1000 - 978307200;
+}
+
+function mapEditorSourceClass(objectId) {
+  const info = objectCatalogById.get(String(intOrZero(objectId)));
+  return intOrZero(info?.raw?.shop_type) === 1 ? "TMMapDataBuilding" : "TMMapDataBase";
+}
+
+function mapEditorDefaultSceneId(objectId, fallback = 1) {
+  const objId = intOrZero(objectId);
+  const info = objectCatalogById.get(String(objId));
+  const type = intOrZero(info?.raw?.type);
+  if (type === 15 || (objId >= 15001 && objId <= 15006)) return 6;
+  return intOrZero(fallback || 1);
+}
+
+function mapEditorSourceTemplate(objectId) {
+  const objId = intOrZero(objectId);
+  if (mapEditorSourceClass(objId) === "TMMapDataBuilding") {
+    return {
+      __class: "TMMapDataBuilding",
+      objectId: objId,
+      baseTile: "{0, 0}",
+      isFlip: false,
+      beginTime: cocoaNowSeconds(),
+      buildingState: 4,
+      coolingTime: 0,
+      gameCoolTime: 0,
+      property: 0,
+    };
+  }
+  return {
+    __class: "TMMapDataBase",
+    objectId: objId,
+    baseTile: "{0, 0}",
+    isFlip: false,
+  };
+}
+
+function normalizeMapEditorObject(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  const sourceClass = String(obj.source_class || "");
+  if (sourceClass !== "map-editor" && sourceClass !== "") return obj;
+  const expectedClass = mapEditorSourceClass(obj.obj_id ?? obj.objectId);
+  const expectedSceneId = mapEditorDefaultSceneId(obj.obj_id ?? obj.objectId, obj.scene_id);
+  if (
+    obj.source_item
+    && typeof obj.source_item === "object"
+    && obj.source_item.__class === expectedClass
+    && intOrZero(obj.scene_id) === expectedSceneId
+  ) {
+    return obj;
+  }
+  const template = mapEditorSourceTemplate(obj.obj_id ?? obj.objectId);
+  return {
+    ...obj,
+    scene_id: expectedSceneId,
+    source_class: "map-editor",
+    source_item: obj.source_item?.__class === expectedClass ? obj.source_item : template,
+  };
+}
+
 function filteredObjectCatalog() {
   const query = objectSearchQuery.trim().toLowerCase();
   const idSearch = isObjectIdSearch(query);
@@ -283,7 +346,7 @@ function normalizePlayerData(input) {
 }
 
 function normalizeObject(obj = {}, index = 0) {
-  return {
+  const normalized = {
     scene_id: intOrZero(obj.scene_id),
     obj_kind: intOrZero(obj.obj_kind),
     key_id: intOrZero(obj.key_id || index + 1),
@@ -291,7 +354,9 @@ function normalizeObject(obj = {}, index = 0) {
     seq_id: intOrZero(obj.seq_id || index + 1),
     enc_mapdata_b64: typeof obj.enc_mapdata_b64 === "string" ? obj.enc_mapdata_b64 : "",
     source_class: obj.source_class || obj.__class || undefined,
+    source_item: obj.source_item && typeof obj.source_item === "object" ? clone(obj.source_item) : undefined,
   };
+  return normalizeMapEditorObject(normalized);
 }
 
 function normalizeMapData(input) {
@@ -304,6 +369,8 @@ function normalizeMapData(input) {
     exported_at: input.exported_at || new Date().toISOString(),
     source: input.source || (input.format === COMBINED_FORMAT ? "combined-json" : "json"),
     map_blob_b64: mapBlob,
+    map_plist_b64: typeof input.map_plist_b64 === "string" ? input.map_plist_b64 : undefined,
+    map_encrypted: typeof input.map_encrypted === "boolean" ? input.map_encrypted : undefined,
     objects,
   };
 }
@@ -950,7 +1017,13 @@ function updateSelectedDraft(patch, options = {}) {
   const y = patch.y ?? (placement.valid ? placement.y : 0);
   const flip = patch.flip ?? !!placement.flip;
   if (patch.scene_id !== undefined) selectedObjectDraft.scene_id = intOrZero(patch.scene_id);
-  if (patch.obj_id !== undefined) selectedObjectDraft.obj_id = intOrZero(patch.obj_id);
+  if (patch.obj_id !== undefined) {
+    selectedObjectDraft.obj_id = intOrZero(patch.obj_id);
+    if (selectedObjectDraft.source_class === "map-editor") {
+      selectedObjectDraft.scene_id = mapEditorDefaultSceneId(selectedObjectDraft.obj_id, selectedObjectDraft.scene_id);
+      selectedObjectDraft.source_item = mapEditorSourceTemplate(selectedObjectDraft.obj_id);
+    }
+  }
   selectedObjectDraft.enc_mapdata_b64 = writeEncMapdata(x, y, flip);
   renderMapEditing({ includeMapJson: options.includeMapJson === true, preserveView: options.preserveView !== false });
   return true;
@@ -964,7 +1037,13 @@ function updateObjectAt(index, patch, options = {}) {
   const y = patch.y ?? (placement.valid ? placement.y : 0);
   const flip = patch.flip ?? !!placement.flip;
   if (patch.scene_id !== undefined) obj.scene_id = intOrZero(patch.scene_id);
-  if (patch.obj_id !== undefined) obj.obj_id = intOrZero(patch.obj_id);
+  if (patch.obj_id !== undefined) {
+    obj.obj_id = intOrZero(patch.obj_id);
+    if (obj.source_class === "map-editor") {
+      obj.scene_id = mapEditorDefaultSceneId(obj.obj_id, obj.scene_id);
+      obj.source_item = mapEditorSourceTemplate(obj.obj_id);
+    }
+  }
   obj.enc_mapdata_b64 = writeEncMapdata(x, y, flip);
   mapData.exported_at = new Date().toISOString();
   renderMapEditing({ includeMapJson: options.includeMapJson !== false, preserveView: options.preserveView !== false });
@@ -1033,13 +1112,14 @@ function addObjectFromInputs(options = {}) {
     return;
   }
   const next = normalizeObject({
-    scene_id: intOrZero(els.addSceneInput.value || 1),
+    scene_id: mapEditorDefaultSceneId(objId, els.addSceneInput.value),
     obj_kind: 0,
     key_id: nextNumericField(objects, "key_id"),
     obj_id: objId,
     seq_id: nextNumericField(objects, "seq_id"),
     enc_mapdata_b64: writeEncMapdata(numberOrZero(els.addXInput.value), numberOrZero(els.addYInput.value), els.addFlipInput.checked),
     source_class: "map-editor",
+    source_item: mapEditorSourceTemplate(objId),
   }, objects.length);
   objects.push(next);
   selectedObjectIndex = objects.length - 1;
@@ -1090,6 +1170,10 @@ async function loadObjectCatalog() {
       }))
       .sort((a, b) => Number(a.id) - Number(b.id));
     objectCatalogById = new Map(objectCatalog.map((item) => [item.id, item]));
+    if (Array.isArray(mapData.objects)) {
+      mapData.objects = mapData.objects.map((obj, index) => normalizeObject(obj, index));
+      if (!mapJsonDirty) renderMapJson();
+    }
     els.objectCatalogList.innerHTML = "";
     for (const item of objectCatalog) {
       const option = document.createElement("option");
@@ -1120,10 +1204,8 @@ function setActiveTab(name) {
   renderValidation();
 }
 
-function downloadJson(data, fileName) {
-  const out = clone(data);
-  out.exported_at = new Date().toISOString();
-  const blob = new Blob([`${JSON.stringify(out, null, 2)}\n`], { type: "application/json;charset=utf-8" });
+function downloadBytes(bytes, fileName, type = "application/octet-stream") {
+  const blob = new Blob([bytes], { type });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = fileName;
@@ -1133,19 +1215,19 @@ function downloadJson(data, fileName) {
   a.remove();
 }
 
+function downloadDat(bytes, fileName) {
+  downloadBytes(bytes, fileName, "application/octet-stream");
+}
+
 async function importPlayerFile(file) {
   if (!file) return;
   try {
     let next;
-    if (file.name.toLowerCase().endsWith(".dat")) {
-      const result = await window.MoleDat.datFileToData(file);
-      if (result.kind !== "userinfo") throw new Error(`${file.name} 解析为 ${result.kind}，不是玩家数据。`);
-      next = result.player;
-      importReport = `已导入 DAT：${result.report.fileName}=userinfo${result.report.encrypted ? "（已解密）" : ""}`;
-    } else {
-      next = normalizePlayerData(JSON.parse(await file.text()));
-      importReport = `已导入玩家 JSON：${file.name}`;
-    }
+    if (!file.name.toLowerCase().endsWith(".dat")) throw new Error("只允许导入 .dat 文件。");
+    const result = await window.MoleDat.datFileToData(file);
+    if (result.kind !== "userinfo") throw new Error(`${file.name} 解析为 ${result.kind}，不是玩家数据。`);
+    next = result.player;
+    importReport = `已导入 DAT：${result.report.fileName}=userinfo${result.report.encrypted ? "（已解密）" : ""}`;
     playerData = next;
     playerFileName = file.name;
     setImportStatus(`玩家数据导入成功：${file.name}`, "ok");
@@ -1161,15 +1243,11 @@ async function importMapFile(file) {
   if (!file) return;
   try {
     let next;
-    if (file.name.toLowerCase().endsWith(".dat")) {
-      const result = await window.MoleDat.datFileToData(file);
-      if (result.kind !== "map") throw new Error(`${file.name} 解析为 ${result.kind}，不是地图数据。`);
-      next = result.map;
-      importReport = `已导入 DAT：${result.report.fileName}=map${result.report.encrypted ? "（已解密）" : ""}`;
-    } else {
-      next = normalizeMapData(JSON.parse(await file.text()));
-      importReport = `已导入地图 JSON：${file.name}`;
-    }
+    if (!file.name.toLowerCase().endsWith(".dat")) throw new Error("只允许导入 .dat 文件。");
+    const result = await window.MoleDat.datFileToData(file);
+    if (result.kind !== "map") throw new Error(`${file.name} 解析为 ${result.kind}，不是地图数据。`);
+    next = result.map;
+    importReport = `已导入 DAT：${result.report.fileName}=map${result.report.encrypted ? "（已解密）" : ""}`;
     clearMapSelection();
     mapData = next;
     mapFileName = file.name;
@@ -1212,6 +1290,8 @@ async function loadMapBase64() {
     mapData = normalizeMapData({
       source: "pasted-map-base64",
       map_blob_b64: result.map_blob_b64,
+      map_plist_b64: result.map_plist_b64,
+      map_encrypted: result.encrypted,
       objects: result.objects,
     });
     clearMapSelection();
@@ -1296,11 +1376,8 @@ async function importDroppedFiles(files) {
     renderAll();
     return;
   }
-  if (activeTab === "player") {
-    await importPlayerFile(list[0]);
-  } else {
-    await importMapFile(list[0]);
-  }
+  importReport = "拖入内容没有 .dat 文件；只允许导入 DAT。";
+  setImportStatus(importReport, "err");
 }
 
 function loadSample() {
@@ -1399,13 +1476,21 @@ els.exportPlayerBtn.addEventListener("click", () => {
   if (!syncPlayerJson()) return;
   const { errors } = validatePlayer();
   renderValidation();
-  if (!errors.length) downloadJson(playerData, `moleworld-player-${playerData.user_id || "new"}.json`);
+  if (!errors.length) {
+    playerData.exported_at = new Date().toISOString();
+    downloadDat(window.MoleDat.playerDataToDatBytes(playerData), "userinfo.dat");
+    setImportStatus("玩家数据已导出为 userinfo.dat。", "ok");
+  }
 });
 els.exportMapBtn.addEventListener("click", () => {
   if (!syncMapJson()) return;
   const { errors } = validateMap();
   renderValidation();
-  if (!errors.length) downloadJson(mapData, "moleworld-map.json");
+  if (!errors.length) {
+    mapData.exported_at = new Date().toISOString();
+    downloadDat(window.MoleDat.mapDataToDatBytes(mapData), "map.dat");
+    setImportStatus("地图数据已导出为 map.dat。", "ok");
+  }
 });
 els.openPasteMapBtn.addEventListener("click", openPasteDialog);
 els.loadMapBase64Btn.addEventListener("click", loadMapBase64);

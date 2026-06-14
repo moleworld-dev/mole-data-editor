@@ -38,11 +38,11 @@
             <div class="panel-head">
               <div>
                 <h2>玩家数据</h2>
-                <p>导入 userinfo.dat 或玩家 JSON，修改数值后可单独导出。</p>
+                <p>导入 userinfo.dat，修改数值后可单独导出 DAT。</p>
               </div>
               <div class="panel-actions">
                 <label class="file-button">
-                  <input id="playerFileInput" type="file" accept=".json,.dat,application/json" />
+                  <input id="playerFileInput" type="file" accept=".dat,application/octet-stream" />
                   导入玩家数据
                 </label>
                 <button id="exportPlayerBtn" type="button">导出玩家数据</button>
@@ -78,11 +78,11 @@
             <div class="panel-head">
               <div>
                 <h2>地图数据</h2>
-                <p>导入 map.dat、粘贴 map base64，或导出当前地图 JSON。</p>
+                <p>导入 map.dat、粘贴 map base64，或导出当前地图 DAT。</p>
               </div>
               <div class="panel-actions">
                 <label class="file-button">
-                  <input id="mapFileInput" type="file" accept=".json,.dat,application/json" />
+                  <input id="mapFileInput" type="file" accept=".dat,application/octet-stream" />
                   导入地图数据
                 </label>
                 <button id="openPasteMapBtn" type="button">粘贴地图</button>
@@ -222,8 +222,8 @@
       </form>
     </dialog>
 
-    <script src="./dat-parser.js?v=20260614-edit-front" charset="UTF-8"></script>
+    <script src="./dat-parser.js?v=20260614-dat-export" charset="UTF-8"></script>
     <script src="./manor-preview.js?v=20260614-picker-canvas" charset="UTF-8"></script>
-    <script src="./app.js?v=20260614-picker-canvas" charset="UTF-8"></script>
+    <script src="./app.js?v=20260615-bridge-scene" charset="UTF-8"></script>
   </body>
 </html>

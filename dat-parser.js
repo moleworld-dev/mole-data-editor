@@ -155,6 +155,61 @@
     return out;
   }
 
+  function subBytes(state) {
+    for (let i = 0; i < 16; i += 1) state[i] = SBOX[state[i]];
+  }
+
+  function shiftRows(state) {
+    const s = state.slice();
+    state[1] = s[5]; state[5] = s[9]; state[9] = s[13]; state[13] = s[1];
+    state[2] = s[10]; state[6] = s[14]; state[10] = s[2]; state[14] = s[6];
+    state[3] = s[15]; state[7] = s[3]; state[11] = s[7]; state[15] = s[11];
+  }
+
+  function mixColumns(state) {
+    for (let c = 0; c < 4; c += 1) {
+      const i = c * 4;
+      const a0 = state[i], a1 = state[i + 1], a2 = state[i + 2], a3 = state[i + 3];
+      state[i] = gfMul(a0, 2) ^ gfMul(a1, 3) ^ a2 ^ a3;
+      state[i + 1] = a0 ^ gfMul(a1, 2) ^ gfMul(a2, 3) ^ a3;
+      state[i + 2] = a0 ^ a1 ^ gfMul(a2, 2) ^ gfMul(a3, 3);
+      state[i + 3] = gfMul(a0, 3) ^ a1 ^ a2 ^ gfMul(a3, 2);
+    }
+  }
+
+  function aesEncryptBlock(block, expandedKey) {
+    const state = Uint8Array.from(block);
+    addRoundKey(state, expandedKey, 0);
+    for (let round = 1; round <= 9; round += 1) {
+      subBytes(state);
+      shiftRows(state);
+      mixColumns(state);
+      addRoundKey(state, expandedKey, round);
+    }
+    subBytes(state);
+    shiftRows(state);
+    addRoundKey(state, expandedKey, 10);
+    return state;
+  }
+
+  function padPkcs7(bytes) {
+    const actualPad = 16 - (bytes.length % 16 || 16) || 16;
+    const out = new Uint8Array(bytes.length + actualPad);
+    out.set(bytes);
+    out.fill(actualPad, bytes.length);
+    return out;
+  }
+
+  function aes128EcbEncrypt(bytes, key) {
+    const padded = padPkcs7(bytes);
+    const expandedKey = expandKey(key);
+    const out = new Uint8Array(padded.length);
+    for (let offset = 0; offset < padded.length; offset += 16) {
+      out.set(aesEncryptBlock(padded.slice(offset, offset + 16), expandedKey), offset);
+    }
+    return out;
+  }
+
   function stripPkcs7(bytes) {
     if (!bytes.length) return bytes;
     const pad = bytes[bytes.length - 1];
@@ -163,6 +218,361 @@
       if (bytes[i] !== pad) return bytes;
     }
     return bytes.slice(0, bytes.length - pad);
+  }
+
+  function utf8Bytes(value) {
+    return new TextEncoder().encode(String(value));
+  }
+
+  function utf16BeBytes(value) {
+    const text = String(value);
+    const out = new Uint8Array(text.length * 2);
+    for (let i = 0; i < text.length; i += 1) {
+      const code = text.charCodeAt(i);
+      out[i * 2] = (code >> 8) & 0xff;
+      out[i * 2 + 1] = code & 0xff;
+    }
+    return out;
+  }
+
+  function writeUIntBE(out, value, size) {
+    let n = BigInt(value);
+    for (let i = size - 1; i >= 0; i -= 1) {
+      out[i] = Number(n & 0xffn);
+      n >>= 8n;
+    }
+  }
+
+  function intSizeFor(value) {
+    const n = BigInt(value);
+    if (n <= 0xffn) return 1;
+    if (n <= 0xffffn) return 2;
+    if (n <= 0xffffffffn) return 4;
+    return 8;
+  }
+
+  function intPowerForSize(size) {
+    return size === 1 ? 0 : size === 2 ? 1 : size === 4 ? 2 : 3;
+  }
+
+  function encodeLength(type, length, out) {
+    if (length < 15) {
+      out.push((type << 4) | length);
+      return;
+    }
+    out.push((type << 4) | 0x0f);
+    const size = intSizeFor(length);
+    out.push(0x10 | intPowerForSize(size));
+    const bytes = new Uint8Array(size);
+    writeUIntBE(bytes, length, size);
+    out.push(...bytes);
+  }
+
+  function encodeUIntObject(value, out) {
+    const size = intSizeFor(value);
+    out.push(0x10 | intPowerForSize(size));
+    const bytes = new Uint8Array(size);
+    writeUIntBE(bytes, value, size);
+    out.push(...bytes);
+  }
+
+  function concatBytes(chunks) {
+    const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const out = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return out;
+  }
+
+  function isUidObject(value) {
+    return value && typeof value === "object" && !Array.isArray(value) && Number.isInteger(value.$uid);
+  }
+
+  function isDataObject(value) {
+    return value && typeof value === "object" && !Array.isArray(value) && typeof value.$data === "string";
+  }
+
+  function isRealObject(value) {
+    return value && typeof value === "object" && !Array.isArray(value) && "$real" in value;
+  }
+
+  function writeBinaryPlist(root) {
+    const objects = [];
+    const primitiveMemo = new Map();
+    const uidMemo = new Map();
+    let emitOrder = null;
+    const emitted = new Set();
+
+    function addEmit(index) {
+      if (emitOrder && !emitted.has(index)) {
+        emitOrder.push(index);
+        emitted.add(index);
+      }
+    }
+
+    function addObject(rep) {
+      const index = objects.length;
+      objects.push(rep);
+      addEmit(index);
+      return index;
+    }
+
+    function reserveObject(rep = null) {
+      const index = objects.length;
+      objects.push(rep);
+      return index;
+    }
+
+    function rememberPrimitive(value, index) {
+      primitiveMemo.set(`${typeof value}:${String(value)}`, index);
+    }
+
+    function isKeyedArchiveRoot(value) {
+      return value && typeof value === "object" && !Array.isArray(value)
+        && value.$archiver === "NSKeyedArchiver"
+        && Array.isArray(value.$objects)
+        && value.$top && isUidObject(value.$top.root);
+    }
+
+    function flatten(value) {
+      if (isDataObject(value)) {
+        return addObject({ type: "data", bytes: base64ToBytes(value.$data) });
+      }
+      if (isRealObject(value)) {
+        const primitiveKey = `real:${Number(value.$real)}`;
+        if (primitiveMemo.has(primitiveKey)) {
+          const index = primitiveMemo.get(primitiveKey);
+          if (objects[index] == null) flattenInto(index, value);
+          return index;
+        }
+        const index = addObject({ type: "real", value: Number(value.$real) });
+        primitiveMemo.set(primitiveKey, index);
+        return index;
+      }
+      if (isUidObject(value)) {
+        if (uidMemo.has(value.$uid)) {
+          const index = uidMemo.get(value.$uid);
+          if (objects[index] == null) flattenInto(index, value);
+          return index;
+        }
+        const index = addObject({ type: "uid", value: value.$uid });
+        uidMemo.set(value.$uid, index);
+        return index;
+      }
+      if (Array.isArray(value)) {
+        const index = addObject(null);
+        flattenContainerInto(index, value);
+        return index;
+      }
+      if (value && typeof value === "object") {
+        const index = addObject(null);
+        flattenContainerInto(index, value);
+        return index;
+      }
+      const primitiveKey = `${typeof value}:${String(value)}`;
+      if (primitiveMemo.has(primitiveKey)) {
+        const index = primitiveMemo.get(primitiveKey);
+        if (objects[index] == null) flattenInto(index, value);
+        return index;
+      }
+      const index = addObject({ type: "primitive", value });
+      rememberPrimitive(value, index);
+      return index;
+    }
+
+    function flattenShallow(value, pending) {
+      if (Array.isArray(value) || (value && typeof value === "object" && !isDataObject(value) && !isRealObject(value) && !isUidObject(value))) {
+        const index = reserveObject();
+        pending.push([index, value]);
+        return index;
+      }
+      return flatten(value);
+    }
+
+    function flattenContainerInto(index, value) {
+      addEmit(index);
+      const pending = [];
+      if (Array.isArray(value)) {
+        objects[index] = {
+          type: "array",
+          itemRefs: value.map((item) => flattenShallow(item, pending)),
+        };
+      } else {
+        const entries = Object.entries(value);
+        objects[index] = {
+          type: "dict",
+          keyRefs: entries.map(([key]) => flatten(String(key))),
+          valueRefs: entries.map(([key, child]) => {
+            if (key === "$classname" && typeof child === "string" && entries.some(([entryKey]) => entryKey === "$classes")) {
+              const primitiveKey = `${typeof child}:${String(child)}`;
+              if (primitiveMemo.has(primitiveKey)) return primitiveMemo.get(primitiveKey);
+              const childIndex = reserveObject();
+              rememberPrimitive(child, childIndex);
+              pending.push([childIndex, child]);
+              return childIndex;
+            }
+            return flattenShallow(child, pending);
+          }),
+        };
+      }
+      pending.forEach(([childIndex, child]) => flattenInto(childIndex, child));
+      return index;
+    }
+
+    function seedKeyedArchiveLayout(value) {
+      emitOrder = [];
+      objects.push(
+        { type: "dict", keyRefs: [1, 2, 3, 4], valueRefs: [5, 6, 7, 8] },
+        { type: "primitive", value: "$archiver" },
+        { type: "primitive", value: "$objects" },
+        { type: "primitive", value: "$top" },
+        { type: "primitive", value: "$version" },
+        { type: "primitive", value: value.$archiver },
+        { type: "array", itemRefs: [] },
+        { type: "dict", keyRefs: [], valueRefs: [] },
+        { type: "primitive", value: value.$version },
+      );
+      [0, 1, 2, 3, 4, 5, 6].forEach(addEmit);
+      for (let i = 1; i <= 5; i += 1) rememberPrimitive(objects[i].value, i);
+      rememberPrimitive(value.$version, 8);
+
+      const pendingObjects = [];
+      objects[6].itemRefs = value.$objects.map((item) => {
+        if (!item || typeof item !== "object") {
+          const key = `${typeof item}:${String(item)}`;
+          if (primitiveMemo.has(key)) return primitiveMemo.get(key);
+          const slot = objects.length;
+          objects.push(null);
+          rememberPrimitive(item, slot);
+          pendingObjects.push([slot, item]);
+          return slot;
+        }
+        const slot = objects.length;
+        objects.push(null);
+        pendingObjects.push([slot, item]);
+        return slot;
+      });
+      pendingObjects.forEach(([slot, item]) => {
+        flattenInto(slot, item);
+      });
+      addEmit(7);
+      objects[7].keyRefs = [flatten("root")];
+      objects[7].valueRefs = [flatten(value.$top.root)];
+      addEmit(8);
+      return 0;
+    }
+
+    function flattenInto(index, value) {
+      addEmit(index);
+      if (isDataObject(value)) {
+        objects[index] = { type: "data", bytes: base64ToBytes(value.$data) };
+        return index;
+      }
+      if (isRealObject(value)) {
+        objects[index] = { type: "real", value: Number(value.$real) };
+        return index;
+      }
+      if (isUidObject(value)) {
+        objects[index] = { type: "uid", value: value.$uid };
+        uidMemo.set(value.$uid, index);
+        return index;
+      }
+      if (Array.isArray(value)) {
+        flattenContainerInto(index, value);
+        return index;
+      }
+      if (value && typeof value === "object") {
+        flattenContainerInto(index, value);
+        return index;
+      }
+      objects[index] = { type: "primitive", value };
+      rememberPrimitive(value, index);
+      return index;
+    }
+
+    const topObject = isKeyedArchiveRoot(root) ? seedKeyedArchiveLayout(root) : flatten(root);
+    const refSize = intSizeFor(Math.max(objects.length - 1, 0));
+    const chunks = [utf8Bytes("bplist00")];
+    const offsets = [];
+
+    function refBytes(ref) {
+      const out = new Uint8Array(refSize);
+      writeUIntBE(out, ref, refSize);
+      return out;
+    }
+
+    function objectBytes(obj) {
+      const out = [];
+      if (obj.type === "primitive") {
+        const value = obj.value;
+        if (value === null || value === undefined) {
+          out.push(0x00);
+        } else if (value === false) {
+          out.push(0x08);
+        } else if (value === true) {
+          out.push(0x09);
+        } else if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+          encodeUIntObject(value, out);
+        } else if (typeof value === "number") {
+          out.push(0x23);
+          const bytes = new Uint8Array(8);
+          new DataView(bytes.buffer).setFloat64(0, value, false);
+          out.push(...bytes);
+        } else {
+          const text = String(value);
+          const ascii = /^[\x00-\x7f]*$/.test(text);
+          const bytes = ascii ? utf8Bytes(text) : utf16BeBytes(text);
+          encodeLength(ascii ? 0x05 : 0x06, text.length, out);
+          out.push(...bytes);
+        }
+      } else if (obj.type === "uid") {
+        const size = intSizeFor(obj.value);
+        out.push(0x80 | (size - 1));
+        const bytes = new Uint8Array(size);
+        writeUIntBE(bytes, obj.value, size);
+        out.push(...bytes);
+      } else if (obj.type === "real") {
+        out.push(0x23);
+        const bytes = new Uint8Array(8);
+        new DataView(bytes.buffer).setFloat64(0, obj.value, false);
+        out.push(...bytes);
+      } else if (obj.type === "data") {
+        encodeLength(0x04, obj.bytes.length, out);
+        out.push(...obj.bytes);
+      } else if (obj.type === "array") {
+        encodeLength(0x0a, obj.itemRefs.length, out);
+        for (const ref of obj.itemRefs) out.push(...refBytes(ref));
+      } else if (obj.type === "dict") {
+        encodeLength(0x0d, obj.keyRefs.length, out);
+        for (const ref of obj.keyRefs) out.push(...refBytes(ref));
+        for (const ref of obj.valueRefs) out.push(...refBytes(ref));
+      }
+      return Uint8Array.from(out);
+    }
+
+    const order = emitOrder || objects.map((_, index) => index);
+    for (const index of order) {
+      offsets[index] = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      chunks.push(objectBytes(objects[index]));
+    }
+
+    const offsetTableOffset = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const offsetSize = intSizeFor(Math.max(...offsets, 0));
+    const offsetTable = new Uint8Array(offsets.length * offsetSize);
+    offsets.forEach((offset, index) => writeUIntBE(offsetTable.subarray(index * offsetSize, (index + 1) * offsetSize), offset, offsetSize));
+    chunks.push(offsetTable);
+
+    const trailer = new Uint8Array(32);
+    trailer[6] = offsetSize;
+    trailer[7] = refSize;
+    writeUIntBE(trailer.subarray(8, 16), objects.length, 8);
+    writeUIntBE(trailer.subarray(16, 24), topObject, 8);
+    writeUIntBE(trailer.subarray(24, 32), offsetTableOffset, 8);
+    chunks.push(trailer);
+    return concatBytes(chunks);
   }
 
   function readUIntBE(bytes, offset, size) {
@@ -347,7 +757,7 @@
     const hasObject = Object.values(tree).some((value) =>
       Array.isArray(value) && value.some((item) => item && typeof item === "object" && "objectId" in item),
     );
-    return numericKeys >= 3 && hasObject;
+    return numericKeys >= 1 && hasObject;
   }
 
   function classifyDat(decoded) {
@@ -434,6 +844,7 @@
           seq_id: seq,
           enc_mapdata_b64: encMapdataBase64(tile.x, tile.y, !!item.isFlip),
           source_class: item.__class || "map",
+          source_item: item,
         });
       }
     }
@@ -469,6 +880,8 @@
       exported_at: new Date().toISOString(),
       source,
       map_blob_b64: bytesToBase64(await gzipBytes(decoded.plistBytes)),
+      map_plist_b64: bytesToBase64(decoded.plistBytes),
+      map_encrypted: decoded.encrypted,
       objects: extractMapObjects(decoded.tree),
     };
   }
@@ -544,6 +957,8 @@
     return {
       objects: extractMapObjects(decoded.tree),
       map_blob_b64: bytesToBase64(mapBlobBytes),
+      map_plist_b64: bytesToBase64(decoded.plistBytes),
+      encrypted: decoded.encrypted,
       report: {
         kind: decoded.kind,
         encrypted: decoded.encrypted,
@@ -553,11 +968,365 @@
     };
   }
 
+  function archiveUid(index) {
+    return { $uid: index };
+  }
+
+  function createArchiveBuilder() {
+    const objects = ["$null"];
+    const classCache = new Map();
+    const keyStringCache = new Map();
+
+    function add(value) {
+      objects.push(value);
+      return objects.length - 1;
+    }
+
+    function reserve() {
+      objects.push(null);
+      return objects.length - 1;
+    }
+
+    function set(index, value) {
+      objects[index] = value;
+      return index;
+    }
+
+    function classIndex(className, classes) {
+      const allClasses = classes || [className, "NSObject"];
+      const key = `${className}\0${allClasses.join("\0")}`;
+      if (!classCache.has(key)) {
+        classCache.set(key, add({
+          $classes: allClasses,
+          $classname: className,
+        }));
+      }
+      return classCache.get(key);
+    }
+
+    function addValue(value) {
+      if (Array.isArray(value)) return addArray(value);
+      if (value && typeof value === "object") {
+        if (isDataObject(value) || isUidObject(value)) return add(value);
+        return addDict(value);
+      }
+      return add(value);
+    }
+
+    function addDict(entries, className = "NSDictionary", classes) {
+      const keyRefs = [];
+      const valueRefs = [];
+      for (const [key, value] of Object.entries(entries)) {
+        keyRefs.push(archiveUid(add(String(key))));
+        valueRefs.push(archiveUid(addValue(value)));
+      }
+      return add({
+        $class: archiveUid(classIndex(className, classes || [className, "NSObject"])),
+        "NS.keys": keyRefs,
+        "NS.objects": valueRefs,
+      });
+    }
+
+    function addDictRefs(entries, className = "NSDictionary", classes) {
+      const keyRefs = [];
+      const valueRefs = [];
+      for (const [key, index] of Object.entries(entries)) {
+        keyRefs.push(archiveUid(add(String(key))));
+        valueRefs.push(archiveUid(index));
+      }
+      return add({
+        $class: archiveUid(classIndex(className, classes || [className, "NSObject"])),
+        "NS.keys": keyRefs,
+        "NS.objects": valueRefs,
+      });
+    }
+
+    function addArray(items, className = "NSArray") {
+      return add({
+        $class: archiveUid(classIndex(className, [className, "NSObject"])),
+        "NS.objects": items.map((item) => archiveUid(addValue(item))),
+      });
+    }
+
+    function addArrayRefs(itemIndexes, className = "NSArray") {
+      return add({
+        $class: archiveUid(classIndex(className, [className, "NSObject"])),
+        "NS.objects": itemIndexes.map((index) => archiveUid(index)),
+      });
+    }
+
+    function addRaw(value) {
+      return add(value);
+    }
+
+    function addKeyString(value) {
+      const key = String(value);
+      if (!keyStringCache.has(key)) keyStringCache.set(key, add(key));
+      return keyStringCache.get(key);
+    }
+
+    function finish(rootIndex) {
+      return {
+        $archiver: "NSKeyedArchiver",
+        $objects: objects,
+        $top: { root: archiveUid(rootIndex) },
+        $version: 100000,
+      };
+    }
+
+    return { addDict, addDictRefs, addArray, addArrayRefs, addRaw, addKeyString, reserve, set, classIndex, finish };
+  }
+
+  function archiveToDatBytes(rootIndex, builder) {
+    const plistBytes = writeBinaryPlist(builder.finish(rootIndex));
+    return aes128EcbEncrypt(plistBytes, DAT_KEY);
+  }
+
+  function playerDataToUserTree(playerData) {
+    const info = playerData?.user_info || {};
+    return {
+      userId: getInt(playerData, "user_id", getInt(playerData, "userId", 0)),
+      username: getString(info, "name", "Mole"),
+      curLevel: Math.max(1, getInt(info, "cur_level", getInt(info, "curLevel", 1))),
+      xp: getInt(info, "xp", 0),
+      gold: getInt(info, "gold", 0),
+      vipGold: getInt(info, "vip_gold", getInt(info, "vipGold", 0)),
+      vipLevel: getInt(info, "vip_level", getInt(info, "vipLevel", 0)),
+      iconIndex: getInt(info, "icon_index", getInt(info, "iconIndex", 0)),
+      totalWorkers: getInt(info, "total_workers", getInt(info, "totalWorkers", 0)),
+      totalRooms: getInt(info, "total_rooms", getInt(info, "totalRooms", 0)),
+    };
+  }
+
+  function playerDataToDatBytes(playerData) {
+    const builder = createArchiveBuilder();
+    const rootIndex = builder.addDict(playerDataToUserTree(playerData), "NSDictionary");
+    return archiveToDatBytes(rootIndex, builder);
+  }
+
+  function clonePlain(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
+  }
+
+  function baseTileStringFromObject(obj) {
+    const placement = parseBaseTileFromEncMapdata(obj?.enc_mapdata_b64);
+    const x = Number.isFinite(placement.x) ? placement.x : 0;
+    const y = Number.isFinite(placement.y) ? placement.y : 0;
+    return `{${Number(x.toFixed(3))}, ${Number(y.toFixed(3))}}`;
+  }
+
+  function parseBaseTileFromEncMapdata(value) {
+    try {
+      const bytes = base64ToBytes(value || "");
+      if (bytes.length < 9) return { x: 0, y: 0, flip: false };
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      return {
+        x: view.getFloat32(0, true),
+        y: view.getFloat32(4, true),
+        flip: view.getUint8(8) !== 0,
+      };
+    } catch {
+      return { x: 0, y: 0, flip: false };
+    }
+  }
+
+  function mapDataToTree(mapData) {
+    const scenes = new Map();
+    for (const obj of mapData?.objects || []) {
+      const sceneId = String(getInt(obj, "scene_id", 0));
+      if (!scenes.has(sceneId)) scenes.set(sceneId, []);
+      const placement = parseBaseTileFromEncMapdata(obj.enc_mapdata_b64);
+      const sourceItem = obj.source_item && typeof obj.source_item === "object" ? clonePlain(obj.source_item) : {};
+      const className = obj.source_class && obj.source_class !== "map" && obj.source_class !== "map-editor"
+        ? String(obj.source_class)
+        : (sourceItem.__class || "TMMapDataBase");
+      scenes.get(sceneId).push({
+        ...sourceItem,
+        __class: className,
+        objectId: getInt(obj, "obj_id", getInt(obj, "objectId", 0)),
+        baseTile: baseTileStringFromObject(obj),
+        isFlip: !!placement.flip,
+      });
+    }
+    return Object.fromEntries([...scenes.entries()].sort((a, b) => Number(a[0]) - Number(b[0])));
+  }
+
+  function mapArchiveBaseTree(mapData) {
+    if (mapData?.map_plist_b64) {
+      try {
+        return clonePlain(decodeDatBytes(base64ToBytes(mapData.map_plist_b64)).tree);
+      } catch {
+        // Fall through to a minimal map tree if the stored source plist is not usable.
+      }
+    }
+    return { __class: "NSMutableDictionary" };
+  }
+
+  function isMapObjectScene(value) {
+    return Array.isArray(value) && value.some((item) => item && typeof item === "object" && "objectId" in item);
+  }
+
+  function mergedMapTree(mapData) {
+    const tree = mapArchiveBaseTree(mapData);
+    if (!tree || typeof tree !== "object" || Array.isArray(tree)) return mapDataToTree(mapData);
+    const nextScenes = mapDataToTree(mapData);
+    const entries = [];
+    const seen = new Set();
+    for (const key of mapArchiveRootKeyOrder(mapData)) {
+      if (!(key in tree)) continue;
+      const value = tree[key];
+      entries.push([key, isMapObjectScene(value) ? (nextScenes[key] || []) : value]);
+      seen.add(key);
+    }
+    for (const [key, value] of Object.entries(nextScenes)) {
+      if (!seen.has(key)) {
+        entries.push([key, value]);
+        seen.add(key);
+      }
+    }
+    for (const [key, value] of Object.entries(tree)) {
+      if (key !== "__class" && !seen.has(key)) entries.push([key, value]);
+    }
+    return {
+      __class: tree.__class || "NSMutableDictionary",
+      __entries: entries,
+    };
+  }
+
+  function mapArchiveRootKeyOrder(mapData) {
+    if (!mapData?.map_plist_b64) return [];
+    try {
+      const decoded = decodeDatBytes(base64ToBytes(mapData.map_plist_b64));
+      const objects = decoded.plist?.$objects;
+      const root = archiveRootDictionary(decoded.plist);
+      if (!Array.isArray(objects) || !Array.isArray(root?.["NS.keys"])) return [];
+      return root["NS.keys"].map((ref) => archiveKeyText(objects, ref)).filter((key) => key != null);
+    } catch {
+      return [];
+    }
+  }
+
+  function archiveClassesFor(className) {
+    if (className === "NSMutableDictionary") return ["NSMutableDictionary", "NSDictionary", "NSObject"];
+    if (className === "NSDictionary") return ["NSDictionary", "NSObject"];
+    if (className === "NSMutableArray") return ["NSMutableArray", "NSArray", "NSObject"];
+    if (className === "NSArray") return ["NSArray", "NSObject"];
+    if (className === "NSNumber") return ["NSNumber", "NSValue", "NSObject"];
+    if (className === "TMMapDataFarm") return ["TMMapDataFarm", "TMMapDataBase", "NSObject"];
+    if (className === "TMMapDataBuilding") return ["TMMapDataBuilding", "TMMapDataBase", "NSObject"];
+    if (className === "TMMapDataBase") return ["TMMapDataBase", "NSObject"];
+    return [className, "NSObject"];
+  }
+
+  function isDirectArchiveScalar(value) {
+    return value == null || typeof value === "number" || typeof value === "boolean";
+  }
+
+  function isRealArchiveField(key) {
+    return key === "NS.dblval"
+      || key === "NS.floatval"
+      || key === "beginTime"
+      || key === "coolingTime"
+      || key === "gameCoolTime";
+  }
+
+  function addTreeValue(builder, value) {
+    if (Array.isArray(value)) {
+      return builder.addArrayRefs(value.map((item) => addTreeValue(builder, item)), "NSMutableArray");
+    }
+    if (value && typeof value === "object") {
+      const className = value.__class || "NSMutableDictionary";
+      const entries = Object.entries(value).filter(([key]) => key !== "__class");
+      if (className === "NSMutableDictionary" || className === "NSDictionary") {
+        const refs = {};
+        for (const [key, child] of entries) refs[key] = addTreeValue(builder, child);
+        return builder.addDictRefs(refs, className, archiveClassesFor(className));
+      }
+      const out = {
+        $class: archiveUid(builder.classIndex(className, archiveClassesFor(className))),
+      };
+      for (const [key, child] of entries) {
+        out[key] = isDirectArchiveScalar(child) ? child : archiveUid(addTreeValue(builder, child));
+      }
+      return builder.addRaw(out);
+    }
+    return builder.addRaw(value);
+  }
+
+  function addTreeValueOriginalOrder(builder, value) {
+    if (isRealObject(value)) return builder.addRaw(value);
+
+    if (Array.isArray(value)) {
+      const index = builder.reserve();
+      const classUid = builder.classIndex("NSMutableArray", archiveClassesFor("NSMutableArray"));
+      const refs = value.map((item) => archiveUid(addTreeValueOriginalOrder(builder, item)));
+      return builder.set(index, {
+        $class: archiveUid(classUid),
+        "NS.objects": refs,
+      });
+    }
+
+    if (value && typeof value === "object") {
+      const className = value.__class || "NSMutableDictionary";
+      const entries = (Array.isArray(value.__entries) ? value.__entries : Object.entries(value))
+        .filter(([key]) => key !== "__class" && key !== "source_item" && key !== "__entries");
+
+      if (className === "NSMutableDictionary" || className === "NSDictionary") {
+        const index = builder.reserve();
+        const classUid = builder.classIndex(className, archiveClassesFor(className));
+        const keyRefs = entries.map(([key]) => archiveUid(builder.addKeyString(key)));
+        const valueRefs = entries.map(([key, child]) => {
+          const value = isRealArchiveField(key) ? { $real: numberValue(child, 0) } : child;
+          return archiveUid(addTreeValueOriginalOrder(builder, value));
+        });
+        return builder.set(index, {
+          $class: archiveUid(classUid),
+          "NS.keys": keyRefs,
+          "NS.objects": valueRefs,
+        });
+      }
+
+      const index = builder.reserve();
+      const classUid = builder.classIndex(className, archiveClassesFor(className));
+      const out = { $class: archiveUid(classUid) };
+      for (const [key, child] of entries) {
+        if (isRealArchiveField(key)) {
+          out[key] = { $real: numberValue(child, 0) };
+        } else {
+          out[key] = isDirectArchiveScalar(child) ? child : archiveUid(addTreeValueOriginalOrder(builder, child));
+        }
+      }
+      return builder.set(index, out);
+    }
+
+    return builder.addRaw(value);
+  }
+
+  function archiveRootDictionary(plist) {
+    const objects = plist?.$objects;
+    const rootUid = uidOf(plist?.$top?.root);
+    const root = Array.isArray(objects) && rootUid != null ? objects[rootUid] : null;
+    return root && typeof root === "object" ? root : null;
+  }
+
+  function archiveKeyText(objects, ref) {
+    const uid = uidOf(ref);
+    return uid == null ? null : String(objects[uid]);
+  }
+
+  function mapDataToDatBytes(mapData) {
+    const builder = createArchiveBuilder();
+    const rootIndex = addTreeValueOriginalOrder(builder, mergedMapTree(mapData));
+    return writeBinaryPlist(builder.finish(rootIndex));
+  }
+
   window.MoleDat = {
     decodeDatBytes,
     datFileToData,
     datFilesToSave,
     classifyDat,
     decodeMapBase64,
+    playerDataToDatBytes,
+    mapDataToDatBytes,
   };
 })();
