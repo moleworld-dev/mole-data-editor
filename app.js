@@ -657,7 +657,7 @@ els.sampleBtn.addEventListener("click", () => {
           key_id: 1,
           obj_id: 4001,
           seq_id: 1,
-          enc_mapdata_b64: writeEncMapdata("", -6, 2, true),
+          enc_mapdata_b64: writeEncMapdata("", 13, 5, true),
         },
         {
           scene_id: 1,
@@ -665,7 +665,7 @@ els.sampleBtn.addEventListener("click", () => {
           key_id: 2,
           obj_id: 5001,
           seq_id: 2,
-          enc_mapdata_b64: writeEncMapdata("", 1, 5, false),
+          enc_mapdata_b64: writeEncMapdata("", 9, 18, false),
         },
         {
           scene_id: 1,
@@ -673,7 +673,7 @@ els.sampleBtn.addEventListener("click", () => {
           key_id: 3,
           obj_id: 6002,
           seq_id: 3,
-          enc_mapdata_b64: writeEncMapdata("", 9, 8, false),
+          enc_mapdata_b64: writeEncMapdata("", 23, 21, false),
         },
         {
           scene_id: 1,
@@ -681,7 +681,7 @@ els.sampleBtn.addEventListener("click", () => {
           key_id: 4,
           obj_id: 14245,
           seq_id: 4,
-          enc_mapdata_b64: writeEncMapdata("", 16, 11, false),
+          enc_mapdata_b64: writeEncMapdata("", 18, 12, false),
         },
         {
           scene_id: 1,
@@ -689,7 +689,7 @@ els.sampleBtn.addEventListener("click", () => {
           key_id: 5,
           obj_id: 15001,
           seq_id: 5,
-          enc_mapdata_b64: writeEncMapdata("", -12, 11, false),
+          enc_mapdata_b64: writeEncMapdata("", 3, 17, false),
         },
       ],
       social: { friends: [] },

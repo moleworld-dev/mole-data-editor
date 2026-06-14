@@ -334,9 +334,7 @@ button:disabled {
   min-height: 460px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background:
-    radial-gradient(circle at 20% 12%, rgba(33, 123, 104, 0.1), transparent 30%),
-    linear-gradient(180deg, #fbfdfc, #eef5f1);
+  background: #419e34;
 }
 
 #objectMap {

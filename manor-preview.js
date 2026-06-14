@@ -6,14 +6,31 @@
   const TILE_HEIGHT = 30;
   const HALF_TILE_WIDTH = TILE_WIDTH / 2;
   const HALF_TILE_HEIGHT = TILE_HEIGHT / 2;
+  const MAP_HEIGHT = 1110;
+  const ORIGIN_TILE_X = 30;
+  const ORIGIN_TILE_Y = 30;
+  const MAP_INIT_WIDTH = 1200;
+  const MAP_INIT_HEIGHT = 795;
+  const MAP_INITIAL_VIEW_X = 0;
+  const MAP_INITIAL_VIEW_Y = 0;
+  const MAP_WIDTH = 5580;
+  const MAP_GROUND_X = -1080;
+  const MAP_GROUND_Y = -1110;
+  const MAP_GROUND_WIDTH = MAP_WIDTH + 2160;
+  const MAP_GROUND_HEIGHT = MAP_HEIGHT * 3;
+  const MAP_GROUND_COLOR = [0.255, 0.62, 0.205, 1];
+  const BACKGROUND_LAYER_X = 0;
+  const BACKGROUND_LAYER_Y = 0;
   const PROPERTY_TABLES = new Set(["property", "propertyHV"]);
   const NAME_TABLES = new Set(["zh-Hans.lproj_property_description", "zh-Hans.lproj_property_descriptionHV"]);
+  const SKIPPED_BACKGROUND_IMAGES = new Set(["", "flower", "tree8"]);
 
   const state = {
     ready: false,
     error: null,
     saveRows: [],
     sprites: [],
+    backgroundSprites: [],
     gridLines: [],
     objectInfo: new Map(),
     frameByName: new Map(),
@@ -26,9 +43,11 @@
     status: null,
     tooltip: null,
     fitBtn: null,
+    mapBtn: null,
     gridBtn: null,
     missingBtn: null,
-    showGrid: true,
+    showMap: true,
+    showGrid: false,
     showMissing: true,
     panX: 0,
     panY: 0,
@@ -165,9 +184,10 @@
   }
 
   async function buildAssetIndex() {
-    const [catalog, frames] = await Promise.all([
+    const [catalog, frames, backgroundRows] = await Promise.all([
       fetchJson(`${ASSET_ROOT}object-catalog.json`),
       fetchJson(`${ASSET_ROOT}atlas-frames.json`),
+      fetchJson(`${ASSET_ROOT}tables/Background.json`),
     ]);
     state.objectInfo = mergeCatalog(catalog);
     state.frameByName = new Map(frames.map((frame) => [frame.frame_name, frame]));
@@ -175,6 +195,7 @@
     for (const info of state.objectInfo.values()) {
       info.md5FrameName = `${md5(info.id)}.png`;
     }
+    state.backgroundSprites = buildBackgroundSprites(backgroundRows);
   }
 
   function standaloneAsset(info) {
@@ -188,17 +209,16 @@
     };
   }
 
-  function frameAsset(info) {
-    if (!info) return null;
-    const directFrame = `${info.id}.png`;
-    const direct = state.frameByName.get(directFrame);
-    const encrypted = state.frameByName.get(info.md5FrameName);
-    const frame = direct || encrypted;
+  function texturePath(name) {
+    return text(name).replace(/\\/g, "/").replace(/\.pvr\.ccz$/i, ".png").replace(/\.pvr$/i, ".png");
+  }
+
+  function assetFromFrame(frame) {
     if (!frame) return null;
     const colorRect = parseRectText(frame.raw?.sourceColorRect);
     return {
       kind: "atlas",
-      src: `${ASSET_ROOT}textures/png/${frame.texture.replace(/\\/g, "/")}`,
+      src: `${ASSET_ROOT}textures/png/${texturePath(frame.texture)}`,
       width: num(frame.source_size?.w, frame.rect?.w || 96),
       height: num(frame.source_size?.h, frame.rect?.h || 96),
       trim: colorRect
@@ -206,6 +226,15 @@
         : { x: 0, y: 0, width: num(frame.rect?.w, 96), height: num(frame.rect?.h, 96) },
       frame,
     };
+  }
+
+  function frameAsset(info) {
+    if (!info) return null;
+    const directFrame = `${info.id}.png`;
+    const direct = state.frameByName.get(directFrame);
+    const encrypted = state.frameByName.get(info.md5FrameName);
+    const frame = direct || encrypted;
+    return assetFromFrame(frame);
   }
 
   function parseRectText(value) {
@@ -219,26 +248,86 @@
     };
   }
 
+  function parsePointText(value) {
+    const match = text(value).match(/\{\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\}/);
+    if (!match) return null;
+    return { x: Number(match[1]), y: Number(match[2]) };
+  }
+
   function assetForObject(info) {
     return standaloneAsset(info) || frameAsset(info);
   }
 
+  function buildBackgroundSprites(rows) {
+    if (!Array.isArray(rows)) return [];
+    const sprites = [];
+    for (const [index, row] of rows.entries()) {
+      const image = text(row.image).trim();
+      const animation = num(row.animation, 0);
+      if (animation !== 0 || SKIPPED_BACKGROUND_IMAGES.has(image)) continue;
+      const position = parsePointText(row.position);
+      const anchor = parsePointText(row.anchor) || { x: 0.5, y: 0.5 };
+      if (!position) continue;
+      const frame = state.frameByName.get(`${image}.png`);
+      const asset = assetFromFrame(frame);
+      if (!asset) continue;
+      const scale = Math.max(0.01, num(row.scale, 1));
+      const width = asset.width * scale;
+      const height = asset.height * scale;
+      const layerX = BACKGROUND_LAYER_X + position.x;
+      const layerY = BACKGROUND_LAYER_Y + position.y;
+      const x = layerX - width * anchor.x;
+      const y = MAP_HEIGHT - layerY - height * (1 - anchor.y);
+      sprites.push({
+        key: `bg:${index}:${image}`,
+        row,
+        info: { id: image, name: image },
+        asset,
+        x,
+        y,
+        width,
+        height,
+        anchor,
+        flip: /^yes$/i.test(text(row.flip)),
+        missing: false,
+        sortY: num(row.depth, image.startsWith("river") ? 4 : image.startsWith("snowmountain") ? 7 : 6),
+        background: true,
+      });
+    }
+    return sprites.sort((a, b) => a.sortY - b.sortY);
+  }
+
   function tileToWorld(column, line) {
     const col = Math.trunc(column);
+    const mapY = ORIGIN_TILE_Y + line * TILE_HEIGHT + HALF_TILE_HEIGHT - (Math.abs(col) % 2) * HALF_TILE_HEIGHT;
     return {
-      x: column * HALF_TILE_WIDTH,
-      y: line * TILE_HEIGHT + HALF_TILE_HEIGHT - (Math.abs(col) % 2) * HALF_TILE_HEIGHT,
+      x: ORIGIN_TILE_X + column * HALF_TILE_WIDTH,
+      y: mapY,
     };
   }
 
-  function anchorFor(info) {
+  function placementTile(placement) {
+    return {
+      line: placement.x,
+      column: placement.y,
+    };
+  }
+
+  function anchorFor(info, flip, asset) {
     const raw = info?.raw || {};
     const restPlace = text(raw.rest_place);
     const lengthX = Math.max(1, num(raw.length_x, 1));
     const lengthY = Math.max(1, num(raw.length_y, 1));
-    if (restPlace === "2" || restPlace === "5") return { x: 0, y: 1 };
-    if (restPlace === "3") return { x: lengthX / Math.max(1, lengthX + lengthY), y: 0.6 };
-    return { x: 0.5, y: 0.5 };
+    const size = lengthX + lengthY;
+    if (size < 1) return { x: 0.5, y: 0 };
+    if (restPlace === "4" && asset) {
+      const offset = ((lengthX - lengthY) * TILE_WIDTH * 0.5) / Math.max(1, asset.width);
+      const baseX = 0.5 + (flip ? -offset : offset);
+      const baseY = 1 - ((lengthX + lengthY) * TILE_HEIGHT * 0.5) / Math.max(1, asset.height);
+      return { x: baseX, y: Math.max(0, Math.min(1, baseY)) };
+    }
+    const baseX = lengthX / size;
+    return { x: flip ? 1 - baseX : baseX, y: 0 };
   }
 
   function spriteFromRow(row) {
@@ -254,9 +343,10 @@
     const raw = info.raw || {};
     const lengthX = Math.max(1, num(raw.length_x, 1));
     const lengthY = Math.max(1, num(raw.length_y, 1));
-    const base = tileToWorld(placement.x, placement.y);
+    const tile = placementTile(placement);
+    const base = tileToWorld(tile.column, tile.line);
     const asset = assetForObject(info);
-    const anchor = anchorFor(info);
+    const anchor = anchorFor(info, !!placement.flip, asset);
     const fallbackWidth = Math.max(48, (lengthX + lengthY) * HALF_TILE_WIDTH);
     const fallbackHeight = Math.max(32, (lengthX + lengthY) * HALF_TILE_HEIGHT);
     const width = asset?.width || fallbackWidth;
@@ -268,10 +358,11 @@
       asset,
       base,
       x: base.x - width * anchor.x,
-      y: base.y - height * anchor.y,
+      y: base.y - height * (1 - anchor.y),
       width,
       height,
       anchor,
+      tile,
       lengthX,
       lengthY,
       flip: !!placement.flip,
@@ -288,10 +379,11 @@
     let maxLine = -Infinity;
     for (const sprite of sprites) {
       const p = sprite.row.placement;
-      minCol = Math.min(minCol, Math.floor(p.x) - 4);
-      maxCol = Math.max(maxCol, Math.ceil(p.x + sprite.lengthX) + 4);
-      minLine = Math.min(minLine, Math.floor(p.y) - 4);
-      maxLine = Math.max(maxLine, Math.ceil(p.y + sprite.lengthY) + 4);
+      const tile = placementTile(p);
+      minCol = Math.min(minCol, Math.floor(tile.column) - 4);
+      maxCol = Math.max(maxCol, Math.ceil(tile.column + sprite.lengthY) + 4);
+      minLine = Math.min(minLine, Math.floor(tile.line) - 4);
+      maxLine = Math.max(maxLine, Math.ceil(tile.line + sprite.lengthX) + 4);
     }
     const lines = [];
     for (let line = minLine; line <= maxLine; line += 1) {
@@ -474,6 +566,23 @@
     return out;
   }
 
+  function rectVertices(x, y, width, height, color) {
+    const out = [];
+    const x1 = x + width;
+    const y1 = y + height;
+    for (const point of [
+      [x, y],
+      [x1, y],
+      [x1, y1],
+      [x, y],
+      [x1, y1],
+      [x, y1],
+    ]) {
+      pushVertex(out, point[0], point[1], 0, 0, color);
+    }
+    return out;
+  }
+
   function lineVertices(lines) {
     const out = [];
     const color = [0.15, 0.38, 0.34, 0.17];
@@ -512,8 +621,31 @@
     resizeCanvas();
     if (state.needsFit) fit();
     const gl = state.gl;
-    gl.clearColor(0, 0, 0, 0);
+    if (state.showMap) {
+      gl.clearColor(MAP_GROUND_COLOR[0], MAP_GROUND_COLOR[1], MAP_GROUND_COLOR[2], MAP_GROUND_COLOR[3]);
+    } else {
+      gl.clearColor(0, 0, 0, 0);
+    }
     gl.clear(gl.COLOR_BUFFER_BIT);
+
+    if (state.showMap && state.backgroundSprites.length) {
+      drawBuffer(
+        state.programs.color,
+        state.buffers.color,
+        rectVertices(MAP_GROUND_X, MAP_GROUND_Y, MAP_GROUND_WIDTH, MAP_GROUND_HEIGHT, MAP_GROUND_COLOR),
+        gl.TRIANGLES,
+        6,
+      );
+      for (const sprite of state.backgroundSprites) {
+        try {
+          const texture = await textureFor(sprite.asset.src);
+          const data = spriteVertices(sprite, texture);
+          drawBuffer(state.programs.texture, state.buffers.texture, data, gl.TRIANGLES, 6, texture.texture);
+        } catch {
+          sprite.missing = true;
+        }
+      }
+    }
 
     if (state.showGrid && state.gridLines.length) {
       const data = lineVertices(state.gridLines);
@@ -541,25 +673,36 @@
 
   function fit() {
     state.needsFit = false;
-    if (!state.sprites.length) {
-      state.zoom = Math.min(1.8, Math.max(0.6, state.canvas.width / 900));
-      state.panX = state.canvas.width / 2;
-      state.panY = state.canvas.height / 2;
+    const fitSprites = state.sprites;
+    if (!fitSprites.length) {
+      if (state.showMap && state.backgroundSprites.length) {
+        fitRect(MAP_INITIAL_VIEW_X, MAP_INITIAL_VIEW_Y, MAP_INITIAL_VIEW_X + MAP_INIT_WIDTH, MAP_INITIAL_VIEW_Y + MAP_INIT_HEIGHT, 80, 70);
+      } else {
+        state.zoom = Math.min(1.8, Math.max(0.6, state.canvas.width / 900));
+        state.panX = state.canvas.width / 2;
+        state.panY = state.canvas.height / 2;
+      }
       return;
     }
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    for (const sprite of state.sprites) {
-      minX = Math.min(minX, sprite.x, sprite.base.x - TILE_WIDTH);
-      minY = Math.min(minY, sprite.y, sprite.base.y - TILE_HEIGHT);
-      maxX = Math.max(maxX, sprite.x + sprite.width, sprite.base.x + TILE_WIDTH);
-      maxY = Math.max(maxY, sprite.y + sprite.height, sprite.base.y + TILE_HEIGHT);
+    for (const sprite of fitSprites) {
+      minX = Math.min(minX, sprite.x, sprite.base ? sprite.base.x - TILE_WIDTH : sprite.x);
+      minY = Math.min(minY, sprite.y, sprite.base ? sprite.base.y - TILE_HEIGHT : sprite.y);
+      maxX = Math.max(maxX, sprite.x + sprite.width, sprite.base ? sprite.base.x + TILE_WIDTH : sprite.x + sprite.width);
+      maxY = Math.max(maxY, sprite.y + sprite.height, sprite.base ? sprite.base.y + TILE_HEIGHT : sprite.y + sprite.height);
     }
     const width = Math.max(1, maxX - minX);
     const height = Math.max(1, maxY - minY);
-    state.zoom = Math.max(0.22, Math.min(3, Math.min(state.canvas.width / (width + 180), state.canvas.height / (height + 140))));
+    fitRect(minX, minY, maxX, maxY, Math.max(180, width * 0.2), Math.max(140, height * 0.2));
+  }
+
+  function fitRect(minX, minY, maxX, maxY, padX, padY) {
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+    state.zoom = Math.max(0.18, Math.min(3, Math.min(state.canvas.width / (width + padX), state.canvas.height / (height + padY))));
     state.panX = state.canvas.width / 2 - ((minX + maxX) / 2) * state.zoom;
     state.panY = state.canvas.height / 2 - ((minY + maxY) / 2) * state.zoom;
   }
@@ -612,6 +755,12 @@
 
   function attachEvents() {
     state.fitBtn?.addEventListener("click", () => {
+      state.needsFit = true;
+      draw();
+    });
+    state.mapBtn?.addEventListener("click", () => {
+      state.showMap = !state.showMap;
+      state.mapBtn.classList.toggle("active", state.showMap);
       state.needsFit = true;
       draw();
     });
@@ -672,6 +821,7 @@
     state.status = document.getElementById("previewStatus");
     state.tooltip = document.getElementById("previewTooltip");
     state.fitBtn = document.getElementById("previewFitBtn");
+    state.mapBtn = document.getElementById("previewMapBtn");
     state.gridBtn = document.getElementById("previewGridBtn");
     state.missingBtn = document.getElementById("previewMissingBtn");
     try {
@@ -694,9 +844,9 @@
     state.gridLines = buildGrid(state.sprites);
     const missing = state.sprites.filter((sprite) => sprite.missing).length;
     if (!state.sprites.length) {
-      setStatus("当前没有可摆放对象；导入 map.dat 或新增对象后会显示庄园摆放画面。");
+      setStatus(`已绘制地图底图：${state.backgroundSprites.length} 个静态背景块。导入 map.dat 或新增对象后会叠加庄园摆放。`);
     } else {
-      setStatus(`WebGL 预览：${state.sprites.length} 个对象，${state.sprites.length - missing} 个匹配贴图，${missing} 个缺图占位。`);
+      setStatus(`WebGL 预览：地图 ${state.backgroundSprites.length} 块，${state.sprites.length} 个对象，${state.sprites.length - missing} 个匹配贴图，${missing} 个缺图占位。`);
     }
     state.needsFit = true;
     draw();
