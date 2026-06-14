@@ -16,6 +16,7 @@ let mapFileName = "新建地图数据";
 let importReport = null;
 let selectedObjectIndex = null;
 let selectedObjectSnapshot = null;
+let selectedObjectDraft = null;
 let objectCatalog = [];
 let objectCatalogById = new Map();
 let renderingSelectedObject = false;
@@ -177,9 +178,14 @@ function selectedObject() {
   return Number.isInteger(selectedObjectIndex) ? mapData.objects?.[selectedObjectIndex] || null : null;
 }
 
+function selectedDraftObject() {
+  return selectedObjectDraft || selectedObject();
+}
+
 function clearMapSelection() {
   selectedObjectIndex = null;
   selectedObjectSnapshot = null;
+  selectedObjectDraft = null;
 }
 
 function normalizeUserInfo(input = {}) {
@@ -264,10 +270,18 @@ function renderForm() {
 }
 
 function renderMap(options = {}) {
+  const draftPlacement = selectedObjectDraft ? parseEncMapdata(selectedObjectDraft.enc_mapdata_b64) : null;
   window.ManorPreview?.render?.(
     mapRows().filter((row) => row.placement.valid),
     {
       selectedIndex: selectedObjectIndex,
+      editPreview: selectedObjectIndex != null && draftPlacement?.valid
+        ? {
+          index: selectedObjectIndex,
+          obj: clone(selectedObjectDraft),
+          placement: draftPlacement,
+        }
+        : null,
       preserveView: !!options.preserveView,
     },
   );
@@ -332,7 +346,7 @@ function renderObjectsTable() {
 }
 
 function renderSelectedObjectPanel() {
-  const obj = selectedObject();
+  const obj = selectedDraftObject();
   const controls = [
     els.editSceneInput,
     els.editObjectIdInput,
@@ -357,7 +371,7 @@ function renderSelectedObjectPanel() {
     return;
   }
 
-  const placement = objectPlacementAt(selectedObjectIndex);
+  const placement = selectedObjectDraft ? parseEncMapdata(selectedObjectDraft.enc_mapdata_b64) : objectPlacementAt(selectedObjectIndex);
   els.selectedObjectLabel.textContent = `${selectedObjectIndex + 1} · ${objectName(obj.obj_id)}`;
   controls.forEach((control) => {
     if (control) control.disabled = false;
@@ -504,7 +518,7 @@ function syncMapJson() {
   if (!mapJsonDirty) return true;
   try {
     mapData = normalizeMapData(JSON.parse(els.mapJsonEditor.value));
-    if (selectedObjectIndex != null && !mapData.objects[selectedObjectIndex]) selectedObjectIndex = null;
+    if (selectedObjectIndex != null && !mapData.objects[selectedObjectIndex]) clearMapSelection();
     mapJsonDirty = false;
     renderAll({ includeMapJson: false });
     return true;
@@ -520,10 +534,27 @@ function selectObject(index, options = {}) {
   selectedObjectSnapshot = selectedObjectIndex == null
     ? null
     : (options.snapshot === null ? null : clone(mapData.objects[selectedObjectIndex]));
+  selectedObjectDraft = selectedObjectIndex == null ? null : clone(mapData.objects[selectedObjectIndex]);
   renderObjectsTable();
   renderSelectedObjectPanel();
   renderMap({ preserveView: options.preserveView !== false });
   if (!options.fromPreview) window.ManorPreview?.selectObject?.(selectedObjectIndex);
+}
+
+function updateSelectedDraft(patch, options = {}) {
+  if (selectedObjectIndex == null) return false;
+  const base = selectedObjectDraft || selectedObject();
+  if (!base) return false;
+  selectedObjectDraft = normalizeObject(base, selectedObjectIndex);
+  const placement = parseEncMapdata(selectedObjectDraft.enc_mapdata_b64);
+  const x = patch.x ?? (placement.valid ? placement.x : 0);
+  const y = patch.y ?? (placement.valid ? placement.y : 0);
+  const flip = patch.flip ?? !!placement.flip;
+  if (patch.scene_id !== undefined) selectedObjectDraft.scene_id = intOrZero(patch.scene_id);
+  if (patch.obj_id !== undefined) selectedObjectDraft.obj_id = intOrZero(patch.obj_id);
+  selectedObjectDraft.enc_mapdata_b64 = writeEncMapdata(x, y, flip);
+  renderMapEditing({ includeMapJson: options.includeMapJson === true, preserveView: options.preserveView !== false });
+  return true;
 }
 
 function updateObjectAt(index, patch, options = {}) {
@@ -542,8 +573,8 @@ function updateObjectAt(index, patch, options = {}) {
 }
 
 function applySelectedObjectInputs() {
-  if (renderingSelectedObject || !selectedObject()) return;
-  updateObjectAt(selectedObjectIndex, {
+  if (renderingSelectedObject || !selectedDraftObject()) return;
+  updateSelectedDraft({
     scene_id: els.editSceneInput.value,
     obj_id: els.editObjectIdInput.value,
     x: numberOrZero(els.editXInput.value),
@@ -553,16 +584,19 @@ function applySelectedObjectInputs() {
 }
 
 function rotateSelectedObject() {
-  const obj = selectedObject();
+  const obj = selectedDraftObject();
   if (!obj) return;
-  const placement = objectPlacementAt(selectedObjectIndex);
-  updateObjectAt(selectedObjectIndex, { flip: !placement.flip });
+  const placement = selectedObjectDraft ? parseEncMapdata(selectedObjectDraft.enc_mapdata_b64) : objectPlacementAt(selectedObjectIndex);
+  updateSelectedDraft({ flip: !placement.flip });
 }
 
 function confirmSelectedObject() {
-  if (!selectedObject()) return;
+  if (!selectedObject() || !selectedObjectDraft) return;
+  mapData.objects[selectedObjectIndex] = normalizeObject(selectedObjectDraft, selectedObjectIndex);
   selectedObjectIndex = null;
   selectedObjectSnapshot = null;
+  selectedObjectDraft = null;
+  mapData.exported_at = new Date().toISOString();
   renderMapEditing({ preserveView: true });
 }
 
@@ -575,6 +609,7 @@ function cancelSelectedObject() {
   }
   selectedObjectIndex = null;
   selectedObjectSnapshot = null;
+  selectedObjectDraft = null;
   mapData.exported_at = new Date().toISOString();
   renderMapEditing({ preserveView: true });
 }
@@ -584,6 +619,7 @@ function deleteSelectedObject() {
   const removed = mapData.objects.splice(selectedObjectIndex, 1)[0];
   selectedObjectIndex = null;
   selectedObjectSnapshot = null;
+  selectedObjectDraft = null;
   mapData.exported_at = new Date().toISOString();
   setImportStatus(`已删除对象 ${removed.obj_id}。`, "ok");
   renderMapEditing();
@@ -609,6 +645,7 @@ function addObjectFromInputs() {
   objects.push(next);
   selectedObjectIndex = objects.length - 1;
   selectedObjectSnapshot = null;
+  selectedObjectDraft = clone(next);
   mapData.exported_at = new Date().toISOString();
   setImportStatus(`已添加对象 ${objectName(objId)}。`, "ok");
   renderMapEditing({ preserveView: true });
@@ -964,8 +1001,8 @@ window.ManorPreview?.configureEditor?.({
   },
   onMove(index, placement, event) {
     selectedObjectIndex = index;
-    updateObjectAt(index, placement, {
-      includeMapJson: event?.final !== false,
+    updateSelectedDraft(placement, {
+      includeMapJson: false,
       preserveView: true,
     });
   },

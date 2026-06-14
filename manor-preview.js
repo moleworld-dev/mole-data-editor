@@ -75,9 +75,11 @@
     panY: 0,
     zoom: 1,
     dragging: false,
+    placementDragging: null,
     pointer: null,
     hovered: null,
     selectedIndex: null,
+    editPreview: null,
     editor: {
       enabled: false,
       onSelect: null,
@@ -412,6 +414,32 @@
       sortY: base.y + lengthY * TILE_HEIGHT,
       missing: !asset,
     };
+  }
+
+  function samePlacement(a = {}, b = {}) {
+    return Number(a.x) === Number(b.x) && Number(a.y) === Number(b.y) && !!a.flip === !!b.flip;
+  }
+
+  function editPreviewSprite() {
+    if (!state.editPreview || !Number.isInteger(state.editPreview.index)) return null;
+    const original = state.sprites.find((sprite) => sprite.row.index === state.editPreview.index);
+    if (!original) return null;
+    const row = {
+      ...original.row,
+      ...(state.editPreview.obj || {}),
+      index: original.row.index,
+      placement: {
+        ...state.editPreview.placement,
+        valid: true,
+      },
+      __editPreview: true,
+    };
+    const sprite = spriteFromRow(row);
+    return sprite ? { ...sprite, original } : null;
+  }
+
+  function selectedTargetSprite() {
+    return editPreviewSprite() || state.sprites.find((sprite) => sprite.row.index === state.selectedIndex) || null;
   }
 
   function buildGrid(sprites) {
@@ -777,6 +805,7 @@
       for (const sprite of state.backgroundSprites) addTextureSource(sources, sprite.asset);
     }
     for (const sprite of state.sprites) addTextureSource(sources, sprite.asset);
+    addTextureSource(sources, editPreviewSprite()?.asset);
     for (const button of state.uiButtons) addTextureSource(sources, button.asset);
     return Array.from(sources);
   }
@@ -830,7 +859,9 @@
       drawBuffer(state.programs.color, state.buffers.color, data, gl.LINES, state.gridLines.length);
     }
 
-    const selected = state.sprites.find((sprite) => sprite.row.index === state.selectedIndex);
+    const preview = editPreviewSprite();
+    const previewDiffers = !!preview && !samePlacement(preview.original.row.placement, preview.row.placement);
+    const selected = selectedTargetSprite();
     if (selected) {
       const fillData = footprintVertices(selected, [0.0, 0.95, 0.82, 0.24]);
       const outlineData = footprintOutlineVertices(selected, [0.05, 1.0, 0.82, 0.95]);
@@ -838,15 +869,15 @@
       drawBuffer(state.programs.color, state.buffers.color, outlineData, gl.LINES, outlineData.length / 8);
     }
 
+    const ghostSprite = preview
+      ? (previewDiffers ? preview : state.sprites.find((sprite) => sprite.row.index === state.selectedIndex))
+      : null;
     const sorted = state.sprites.slice().sort((a, b) => a.sortY - b.sortY || num(a.row.seq_id) - num(b.row.seq_id));
     for (const sprite of sorted) {
+      if (sprite === ghostSprite) continue;
       if (sprite.asset) {
         try {
           const texture = await textureFor(sprite.asset.src);
-          if (sprite.row.index === state.selectedIndex) {
-            const glowData = selectedGlowVertices(sprite, texture);
-            drawBuffer(state.programs.texture, state.buffers.texture, glowData, gl.TRIANGLES, glowData.length / 8, texture.texture);
-          }
           const data = spriteVertices(sprite, texture);
           drawBuffer(state.programs.texture, state.buffers.texture, data, gl.TRIANGLES, 6, texture.texture);
           continue;
@@ -856,6 +887,21 @@
       }
       if (state.showMissing) {
         const data = footprintVertices(sprite);
+        drawBuffer(state.programs.color, state.buffers.color, data, gl.TRIANGLES, 6);
+      }
+    }
+    if (ghostSprite) {
+      if (ghostSprite.asset) {
+        try {
+          const texture = await textureFor(ghostSprite.asset.src);
+          const data = spriteVertices(ghostSprite, texture, { color: [1, 1, 1, 0.58] });
+          drawBuffer(state.programs.texture, state.buffers.texture, data, gl.TRIANGLES, 6, texture.texture);
+        } catch {
+          ghostSprite.missing = true;
+        }
+      }
+      if (!ghostSprite.asset && state.showMissing) {
+        const data = footprintVertices(ghostSprite, [0.12, 0.48, 0.41, 0.35]);
         drawBuffer(state.programs.color, state.buffers.color, data, gl.TRIANGLES, 6);
       }
     }
@@ -945,7 +991,7 @@
   }
 
   function updateUiButtons() {
-    const selected = state.sprites.find((sprite) => sprite.row.index === state.selectedIndex);
+    const selected = selectedTargetSprite();
     state.canvas.classList.toggle("placing-object", !!selected);
     if (!selected) {
       state.uiButtons = [];
@@ -1050,13 +1096,40 @@
   }
 
   function placeSelectedAt(event) {
-    const selected = state.sprites.find((sprite) => sprite.row.index === state.selectedIndex);
+    const selected = selectedTargetSprite();
     if (!selected) return;
     const placement = selected.row.placement || {};
     state.editor.onMove?.(selected.row.index, {
       ...worldToPlacement(screenToWorld(event.clientX, event.clientY)),
       flip: !!placement.flip,
     }, { final: true });
+  }
+
+  function updatePlacementDrag(event, final = false) {
+    if (!state.placementDragging) return;
+    const selected = selectedTargetSprite();
+    if (!selected) return;
+    const placement = selected.row.placement || {};
+    state.editor.onMove?.(selected.row.index, {
+      ...worldToPlacement(screenToWorld(event.clientX, event.clientY)),
+      flip: !!placement.flip,
+    }, { final });
+  }
+
+  function beginPlacementDrag(event) {
+    const selected = selectedTargetSprite();
+    if (!selected) return false;
+    state.placementDragging = { pointerId: event.pointerId };
+    state.canvas.classList.add("dragging");
+    updatePlacementDrag(event, false);
+    return true;
+  }
+
+  function finishPlacementDrag(event) {
+    if (!state.placementDragging) return;
+    updatePlacementDrag(event, true);
+    state.placementDragging = null;
+    state.canvas.classList.remove("dragging");
   }
 
   function attachEvents() {
@@ -1091,7 +1164,7 @@
           if (uiButton.id === "cancel") state.editor.onCancel?.(state.selectedIndex);
           if (uiButton.id === "delete") state.editor.onDelete?.(state.selectedIndex);
         } else if (state.selectedIndex != null) {
-          placeSelectedAt(event);
+          beginPlacementDrag(event);
         } else if (picked) {
           selectPreviewObject(picked);
         } else {
@@ -1107,6 +1180,12 @@
       state.canvas.classList.add("dragging");
     });
     state.canvas.addEventListener("pointermove", (event) => {
+      if (state.placementDragging) {
+        updatePlacementDrag(event, false);
+        state.hovered = selectedTargetSprite();
+        renderTooltip(event);
+        return;
+      }
       if (state.dragging && state.pointer) {
         const dpr = Math.min(2, window.devicePixelRatio || 1);
         state.panX = state.pointer.panX + (event.clientX - state.pointer.x) * dpr;
@@ -1116,11 +1195,13 @@
       state.hovered = pick(event.clientX, event.clientY);
       renderTooltip(event);
     });
-    state.canvas.addEventListener("pointerup", () => {
+    state.canvas.addEventListener("pointerup", (event) => {
+      finishPlacementDrag(event);
       state.dragging = false;
       state.canvas.classList.remove("dragging");
     });
     state.canvas.addEventListener("pointerleave", () => {
+      state.placementDragging = null;
       state.dragging = false;
       state.hovered = null;
       state.canvas.classList.remove("dragging");
@@ -1167,6 +1248,7 @@
   function render(rows, options = {}) {
     state.saveRows = Array.isArray(rows) ? rows : [];
     if ("selectedIndex" in options) state.selectedIndex = Number.isInteger(options.selectedIndex) ? options.selectedIndex : null;
+    state.editPreview = options.editPreview || null;
     if (!state.ready) return;
     state.sprites = state.saveRows.map(spriteFromRow).filter(Boolean);
     state.gridLines = buildGrid(state.sprites);
