@@ -25,6 +25,8 @@ const els = {
   mapBlobInfo: document.getElementById("mapBlobInfo"),
   keepMapBtn: document.getElementById("keepMapBtn"),
   clearMapBtn: document.getElementById("clearMapBtn"),
+  mapBase64Input: document.getElementById("mapBase64Input"),
+  loadMapBase64Btn: document.getElementById("loadMapBase64Btn"),
   objectMap: document.getElementById("objectMap"),
   objectsTable: document.getElementById("objectsTable"),
   addObjectBtn: document.getElementById("addObjectBtn"),
@@ -614,6 +616,41 @@ els.clearMapBtn.addEventListener("click", () => {
   saveData.user_info = saveData.user_info || {};
   saveData.user_info.map_blob_b64 = null;
   syncAfterEdit();
+});
+
+els.loadMapBase64Btn.addEventListener("click", async () => {
+  const value = els.mapBase64Input.value.trim();
+  if (!value) {
+    setImportStatus("请先粘贴 map base64。", "err");
+    return;
+  }
+  els.loadMapBase64Btn.disabled = true;
+  setImportStatus("正在解析粘贴的 map base64...");
+  try {
+    const result = await window.MoleDat.decodeMapBase64(value);
+    saveData.user_info = saveData.user_info || {};
+    saveData.user_info.map_blob_b64 = result.map_blob_b64;
+    saveData.objects = result.objects;
+    originalMapBlobState = { present: true, value: result.map_blob_b64 };
+    importReport = [{
+      fileName: "pasted-map-base64",
+      kind: result.report.kind,
+      encrypted: result.report.encrypted,
+      plistBytes: result.report.plistBytes,
+    }];
+    rawDirty = false;
+    renderAll();
+    setImportStatus(
+      `map base64 解析成功：${result.objects.length} 个对象，blob ${formatNumber(result.report.blobBytes)} B。`,
+      "ok",
+    );
+  } catch (error) {
+    const msg = `map base64 解析失败：${error.message}`;
+    setImportStatus(msg, "err");
+    alert(msg);
+  } finally {
+    els.loadMapBase64Btn.disabled = false;
+  }
 });
 
 els.addObjectBtn.addEventListener("click", () => {

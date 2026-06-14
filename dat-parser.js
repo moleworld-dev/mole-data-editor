@@ -53,6 +53,22 @@
     return Buffer.from(bin, "binary").toString("base64");
   }
 
+  function base64ToBytes(value) {
+    const clean = String(value || "")
+      .replace(/^data:[^,]*,/i, "")
+      .replace(/\s/g, "")
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    if (!clean) throw new Error("base64 is empty");
+    const padded = clean.padEnd(Math.ceil(clean.length / 4) * 4, "=");
+    const bin = typeof atob === "function"
+      ? atob(padded)
+      : Buffer.from(padded, "base64").toString("binary");
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
   function gfMul(a, b) {
     let out = 0;
     for (let i = 0; i < 8; i += 1) {
@@ -360,6 +376,16 @@
     return new Uint8Array(await new Response(stream).arrayBuffer());
   }
 
+  async function gunzipBytes(bytes) {
+    if (!("DecompressionStream" in window)) throw new Error("this browser does not support gzip decompression");
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  function isGzip(bytes) {
+    return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+  }
+
   function numberValue(value, fallback = 0) {
     if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
     if (value && typeof value === "object") {
@@ -461,9 +487,34 @@
     };
   }
 
+  async function decodeMapBase64(value) {
+    const clean = String(value || "")
+      .replace(/^data:[^,]*,/i, "")
+      .replace(/\s/g, "")
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    const inputBytes = base64ToBytes(clean);
+    const plistBytes = isGzip(inputBytes) ? await gunzipBytes(inputBytes) : inputBytes;
+    const decoded = decodeDatBytes(plistBytes);
+    decoded.kind = classifyDat(decoded);
+    if (decoded.kind !== "map") throw new Error(`base64 decoded as ${decoded.kind}, not map`);
+    const mapBlobBytes = isGzip(inputBytes) ? inputBytes : await gzipBytes(decoded.plistBytes);
+    return {
+      objects: extractMapObjects(decoded.tree),
+      map_blob_b64: bytesToBase64(mapBlobBytes),
+      report: {
+        kind: decoded.kind,
+        encrypted: decoded.encrypted,
+        plistBytes: decoded.plistBytes.length,
+        blobBytes: mapBlobBytes.length,
+      },
+    };
+  }
+
   window.MoleDat = {
     decodeDatBytes,
     datFilesToSave,
     classifyDat,
+    decodeMapBase64,
   };
 })();

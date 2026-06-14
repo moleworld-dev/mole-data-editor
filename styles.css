@@ -428,6 +428,22 @@ textarea:focus {
   padding: 14px;
 }
 
+.map-base64-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 12px;
+  padding: 14px;
+}
+
+.map-base64-tools textarea {
+  min-height: 96px;
+  resize: vertical;
+  padding: 9px;
+  font-family: Consolas, "SFMono-Regular", monospace;
+}
+
 .segmented {
   display: inline-flex;
   border: 1px solid var(--line);

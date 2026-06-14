@@ -92,6 +92,10 @@
                 <button id="clearMapBtn" type="button">清空</button>
               </div>
             </div>
+            <div class="map-base64-tools">
+              <label>map base64<textarea id="mapBase64Input" spellcheck="false" placeholder="Paste map.dat or map_blob_b64 base64"></textarea></label>
+              <button id="loadMapBase64Btn" type="button">加载 base64 地图</button>
+            </div>
           </section>
 
           <section id="tab-objects" class="tab-panel">
@@ -136,8 +140,8 @@
       </section>
     </main>
 
-    <script src="./dat-parser.js" charset="UTF-8"></script>
-    <script src="./manor-preview.js" charset="UTF-8"></script>
-    <script src="./app.js" charset="UTF-8"></script>
+    <script src="./dat-parser.js?v=20260614-map-base64" charset="UTF-8"></script>
+    <script src="./manor-preview.js?v=20260614-map-base64" charset="UTF-8"></script>
+    <script src="./app.js?v=20260614-map-base64" charset="UTF-8"></script>
   </body>
 </html>
