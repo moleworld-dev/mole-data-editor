@@ -50,16 +50,19 @@
             <div class="map-panel">
               <div class="panel-head">
               <div>
-                <h2>庄园对象图</h2>
-                <p>圆点来自 `objects[].enc_mapdata_b64` 的坐标头；地图整图 blob 默认原样保留。</p>
+                <h2>庄园摆放预览</h2>
+                <p>使用 WebGL 按 `objects[].enc_mapdata_b64` 的 baseTile 坐标绘制导出贴图。</p>
               </div>
-                <div class="legend">
-                  <span><i class="dot map"></i>地图摆放</span>
-                  <span><i class="dot storage"></i>仓库/背包</span>
+                <div class="preview-actions">
+                  <button id="previewFitBtn" type="button">适配</button>
+                  <button id="previewGridBtn" type="button" class="active">网格</button>
+                  <button id="previewMissingBtn" type="button" class="active">缺图占位</button>
                 </div>
               </div>
               <div class="map-canvas-wrap">
-                <svg id="objectMap" role="img" aria-label="庄园对象坐标图"></svg>
+                <canvas id="objectMap" role="img" aria-label="庄园对象实际摆放预览"></canvas>
+                <div id="previewTooltip" class="preview-tooltip" hidden></div>
+                <div id="previewStatus" class="preview-status">正在读取导出的贴图资源...</div>
               </div>
             </div>
           </section>
@@ -133,6 +136,7 @@
     </main>
 
     <script src="./dat-parser.js" charset="UTF-8"></script>
+    <script src="./manor-preview.js" charset="UTF-8"></script>
     <script src="./app.js" charset="UTF-8"></script>
   </body>
 </html>

@@ -307,47 +307,8 @@ function objectRows() {
 }
 
 function renderMap() {
-  const svg = els.objectMap;
-  svg.innerHTML = "";
   const rows = objectRows().filter((row) => row.placement.valid);
-  if (!rows.length) {
-    svg.setAttribute("viewBox", "0 0 720 460");
-    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    text.setAttribute("x", "360");
-    text.setAttribute("y", "230");
-    text.setAttribute("text-anchor", "middle");
-    text.setAttribute("fill", "#65777c");
-    text.textContent = "当前没有摆放对象；导入 map.dat 或新增对象后会显示坐标";
-    svg.appendChild(text);
-    return;
-  }
-
-  const xs = rows.map((row) => row.placement.x);
-  const ys = rows.map((row) => row.placement.y);
-  const minX = Math.min(...xs) - 4;
-  const maxX = Math.max(...xs) + 4;
-  const minY = Math.min(...ys) - 4;
-  const maxY = Math.max(...ys) + 4;
-  const width = Math.max(720, (maxX - minX) * 28);
-  const height = Math.max(460, (maxY - minY) * 28);
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-
-  const scaleX = (x) => ((x - minX) / Math.max(1, maxX - minX)) * (width - 56) + 28;
-  const scaleY = (y) => ((y - minY) / Math.max(1, maxY - minY)) * (height - 56) + 28;
-
-  rows.forEach((row) => {
-    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", scaleX(row.placement.x));
-    circle.setAttribute("cy", scaleY(row.placement.y));
-    circle.setAttribute("r", row.obj_kind === 0 ? "7" : "5");
-    circle.setAttribute("fill", row.obj_kind === 0 ? "#217b68" : "#b54f38");
-    circle.setAttribute("opacity", "0.86");
-    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-    title.textContent = `${objectLabel(Number(row.obj_id))}\nobj=${row.obj_id}, seq=${row.seq_id}\n(${row.placement.x}, ${row.placement.y})`;
-    group.append(circle, title);
-    svg.appendChild(group);
-  });
+  window.ManorPreview?.render?.(rows);
 }
 
 function inputCell(row, key, cls = "tiny", type = "number") {
@@ -696,7 +657,39 @@ els.sampleBtn.addEventListener("click", () => {
           key_id: 1,
           obj_id: 4001,
           seq_id: 1,
-          enc_mapdata_b64: writeEncMapdata("", 1, 2, true),
+          enc_mapdata_b64: writeEncMapdata("", -6, 2, true),
+        },
+        {
+          scene_id: 1,
+          obj_kind: 0,
+          key_id: 2,
+          obj_id: 5001,
+          seq_id: 2,
+          enc_mapdata_b64: writeEncMapdata("", 1, 5, false),
+        },
+        {
+          scene_id: 1,
+          obj_kind: 0,
+          key_id: 3,
+          obj_id: 6002,
+          seq_id: 3,
+          enc_mapdata_b64: writeEncMapdata("", 9, 8, false),
+        },
+        {
+          scene_id: 1,
+          obj_kind: 0,
+          key_id: 4,
+          obj_id: 14245,
+          seq_id: 4,
+          enc_mapdata_b64: writeEncMapdata("", 16, 11, false),
+        },
+        {
+          scene_id: 1,
+          obj_kind: 0,
+          key_id: 5,
+          obj_id: 15001,
+          seq_id: 5,
+          enc_mapdata_b64: writeEncMapdata("", -12, 11, false),
         },
       ],
       social: { friends: [] },

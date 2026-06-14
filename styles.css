@@ -291,12 +291,24 @@ button:disabled {
   font-size: 18px;
 }
 
-.legend {
+.legend,
+.preview-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.preview-actions {
+  justify-content: flex-end;
+}
+
+.preview-actions button.active {
+  background: var(--panel-2);
+  border-color: #bcd2cb;
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .dot {
@@ -316,22 +328,64 @@ button:disabled {
 }
 
 .map-canvas-wrap {
-  overflow: auto;
+  position: relative;
+  overflow: hidden;
+  height: clamp(520px, calc(100vh - 245px), 780px);
   min-height: 460px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background:
-    linear-gradient(90deg, rgba(33, 123, 104, 0.06) 1px, transparent 1px),
-    linear-gradient(rgba(33, 123, 104, 0.06) 1px, transparent 1px),
-    #fbfdfc;
-  background-size: 32px 32px;
+    radial-gradient(circle at 20% 12%, rgba(33, 123, 104, 0.1), transparent 30%),
+    linear-gradient(180deg, #fbfdfc, #eef5f1);
 }
 
 #objectMap {
   display: block;
   width: 100%;
-  min-width: 720px;
-  min-height: 460px;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  touch-action: none;
+  cursor: grab;
+}
+
+#objectMap.dragging {
+  cursor: grabbing;
+}
+
+.preview-status {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  max-width: min(680px, calc(100% - 24px));
+  padding: 8px 10px;
+  border: 1px solid rgba(216, 225, 227, 0.88);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.preview-status.bad {
+  border-color: #e2a3a3;
+  background: rgba(255, 240, 240, 0.94);
+  color: #7a2020;
+}
+
+.preview-tooltip {
+  position: absolute;
+  z-index: 2;
+  max-width: 300px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(27, 37, 40, 0.94);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+  box-shadow: 0 10px 26px rgba(20, 30, 34, 0.22);
 }
 
 .form-grid {
@@ -453,6 +507,10 @@ td .wide {
   .panel-head,
   .blob-tools {
     display: grid;
+  }
+
+  .preview-actions {
+    justify-content: flex-start;
   }
 
   .editor-shell {
