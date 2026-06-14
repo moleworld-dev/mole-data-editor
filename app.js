@@ -14,6 +14,10 @@ let mapJsonDirty = false;
 let playerFileName = "新建玩家数据";
 let mapFileName = "新建地图数据";
 let importReport = null;
+let selectedObjectIndex = null;
+let objectCatalog = [];
+let objectCatalogById = new Map();
+let renderingSelectedObject = false;
 
 const els = {
   playerFileInput: document.getElementById("playerFileInput"),
@@ -38,6 +42,22 @@ const els = {
   objectMap: document.getElementById("objectMap"),
   objectsTable: document.getElementById("objectsTable"),
   mapStatsGrid: document.getElementById("mapStatsGrid"),
+  selectedObjectLabel: document.getElementById("selectedObjectLabel"),
+  editSceneInput: document.getElementById("editSceneInput"),
+  editObjectIdInput: document.getElementById("editObjectIdInput"),
+  editXInput: document.getElementById("editXInput"),
+  editYInput: document.getElementById("editYInput"),
+  editFlipInput: document.getElementById("editFlipInput"),
+  rotateObjectBtn: document.getElementById("rotateObjectBtn"),
+  deleteObjectBtn: document.getElementById("deleteObjectBtn"),
+  addSceneInput: document.getElementById("addSceneInput"),
+  addObjectIdInput: document.getElementById("addObjectIdInput"),
+  addXInput: document.getElementById("addXInput"),
+  addYInput: document.getElementById("addYInput"),
+  addFlipInput: document.getElementById("addFlipInput"),
+  addObjectBtn: document.getElementById("addObjectBtn"),
+  addObjectHint: document.getElementById("addObjectHint"),
+  objectCatalogList: document.getElementById("objectCatalogList"),
   sampleBtn: document.getElementById("sampleBtn"),
   importStatus: document.getElementById("importStatus"),
 };
@@ -138,6 +158,24 @@ function writeEncMapdata(x, y, flip) {
   return btoa(bin);
 }
 
+function nextNumericField(objects, key) {
+  return objects.reduce((max, obj) => Math.max(max, intOrZero(obj[key])), 0) + 1;
+}
+
+function objectName(objectId) {
+  const info = objectCatalogById.get(String(objectId));
+  return info?.name ? `${objectId} ${info.name}` : `#${objectId}`;
+}
+
+function objectPlacementAt(index) {
+  const obj = mapData.objects?.[index];
+  return obj ? parseEncMapdata(obj.enc_mapdata_b64) : { x: null, y: null, flip: false, valid: false };
+}
+
+function selectedObject() {
+  return Number.isInteger(selectedObjectIndex) ? mapData.objects?.[selectedObjectIndex] || null : null;
+}
+
 function normalizeUserInfo(input = {}) {
   return {
     name: String(input.name ?? input.username ?? "Mole"),
@@ -219,8 +257,14 @@ function renderForm() {
   });
 }
 
-function renderMap() {
-  window.ManorPreview?.render?.(mapRows().filter((row) => row.placement.valid));
+function renderMap(options = {}) {
+  window.ManorPreview?.render?.(
+    mapRows().filter((row) => row.placement.valid),
+    {
+      selectedIndex: selectedObjectIndex,
+      preserveView: !!options.preserveView,
+    },
+  );
 }
 
 function stat(label, value) {
@@ -250,6 +294,8 @@ function renderObjectsTable() {
   els.objectsTable.innerHTML = "";
   mapRows().forEach((row) => {
     const tr = document.createElement("tr");
+    tr.className = row.index === selectedObjectIndex ? "selected-row" : "";
+    tr.addEventListener("click", () => selectObject(row.index, { preserveView: true }));
     [
       row.obj_kind,
       row.scene_id,
@@ -264,8 +310,58 @@ function renderObjectsTable() {
       td.textContent = String(value ?? "-");
       tr.appendChild(td);
     });
+    const action = document.createElement("td");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "table-action";
+    button.textContent = "选中";
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectObject(row.index, { preserveView: true });
+    });
+    action.appendChild(button);
+    tr.appendChild(action);
     els.objectsTable.appendChild(tr);
   });
+}
+
+function renderSelectedObjectPanel() {
+  const obj = selectedObject();
+  const controls = [
+    els.editSceneInput,
+    els.editObjectIdInput,
+    els.editXInput,
+    els.editYInput,
+    els.editFlipInput,
+    els.rotateObjectBtn,
+    els.deleteObjectBtn,
+  ];
+  renderingSelectedObject = true;
+  if (!obj) {
+    els.selectedObjectLabel.textContent = "未选择";
+    controls.forEach((control) => {
+      if (control) control.disabled = true;
+    });
+    els.editSceneInput.value = "";
+    els.editObjectIdInput.value = "";
+    els.editXInput.value = "";
+    els.editYInput.value = "";
+    els.editFlipInput.checked = false;
+    renderingSelectedObject = false;
+    return;
+  }
+
+  const placement = objectPlacementAt(selectedObjectIndex);
+  els.selectedObjectLabel.textContent = `${selectedObjectIndex + 1} · ${objectName(obj.obj_id)}`;
+  controls.forEach((control) => {
+    if (control) control.disabled = false;
+  });
+  els.editSceneInput.value = obj.scene_id;
+  els.editObjectIdInput.value = obj.obj_id;
+  els.editXInput.value = placement.valid ? placement.x : 0;
+  els.editYInput.value = placement.valid ? placement.y : 0;
+  els.editFlipInput.checked = !!placement.flip;
+  renderingSelectedObject = false;
 }
 
 function renderPlayerJson() {
@@ -351,8 +447,19 @@ function renderAll({ includePlayerJson = true, includeMapJson = true } = {}) {
   renderMapStats();
   renderObjectsTable();
   renderMap();
+  renderSelectedObjectPanel();
   renderValidation();
   if (includePlayerJson) renderPlayerJson();
+  if (includeMapJson) renderMapJson();
+}
+
+function renderMapEditing({ includeMapJson = true, preserveView = true } = {}) {
+  renderSummary();
+  renderMapStats();
+  renderObjectsTable();
+  renderMap({ preserveView });
+  renderSelectedObjectPanel();
+  renderValidation();
   if (includeMapJson) renderMapJson();
 }
 
@@ -391,12 +498,121 @@ function syncMapJson() {
   if (!mapJsonDirty) return true;
   try {
     mapData = normalizeMapData(JSON.parse(els.mapJsonEditor.value));
+    if (selectedObjectIndex != null && !mapData.objects[selectedObjectIndex]) selectedObjectIndex = null;
     mapJsonDirty = false;
     renderAll({ includeMapJson: false });
     return true;
   } catch (error) {
     alert(`地图 JSON 解析失败：${error.message}`);
     return false;
+  }
+}
+
+function selectObject(index, options = {}) {
+  const count = mapData.objects?.length || 0;
+  selectedObjectIndex = Number.isInteger(index) && index >= 0 && index < count ? index : null;
+  renderObjectsTable();
+  renderSelectedObjectPanel();
+  renderMap({ preserveView: options.preserveView !== false });
+  if (!options.fromPreview) window.ManorPreview?.selectObject?.(selectedObjectIndex);
+}
+
+function updateObjectAt(index, patch, options = {}) {
+  const obj = mapData.objects?.[index];
+  if (!obj) return false;
+  const placement = parseEncMapdata(obj.enc_mapdata_b64);
+  const x = patch.x ?? (placement.valid ? placement.x : 0);
+  const y = patch.y ?? (placement.valid ? placement.y : 0);
+  const flip = patch.flip ?? !!placement.flip;
+  if (patch.scene_id !== undefined) obj.scene_id = intOrZero(patch.scene_id);
+  if (patch.obj_id !== undefined) obj.obj_id = intOrZero(patch.obj_id);
+  obj.enc_mapdata_b64 = writeEncMapdata(x, y, flip);
+  mapData.exported_at = new Date().toISOString();
+  renderMapEditing({ includeMapJson: options.includeMapJson !== false, preserveView: options.preserveView !== false });
+  return true;
+}
+
+function applySelectedObjectInputs() {
+  if (renderingSelectedObject || !selectedObject()) return;
+  updateObjectAt(selectedObjectIndex, {
+    scene_id: els.editSceneInput.value,
+    obj_id: els.editObjectIdInput.value,
+    x: numberOrZero(els.editXInput.value),
+    y: numberOrZero(els.editYInput.value),
+    flip: els.editFlipInput.checked,
+  });
+}
+
+function rotateSelectedObject() {
+  const obj = selectedObject();
+  if (!obj) return;
+  const placement = objectPlacementAt(selectedObjectIndex);
+  updateObjectAt(selectedObjectIndex, { flip: !placement.flip });
+}
+
+function deleteSelectedObject() {
+  if (!selectedObject()) return;
+  const removed = mapData.objects.splice(selectedObjectIndex, 1)[0];
+  selectedObjectIndex = Math.min(selectedObjectIndex, mapData.objects.length - 1);
+  if (selectedObjectIndex < 0) selectedObjectIndex = null;
+  mapData.exported_at = new Date().toISOString();
+  setImportStatus(`已删除对象 ${removed.obj_id}。`, "ok");
+  renderMapEditing();
+}
+
+function addObjectFromInputs() {
+  if (!syncMapJson()) return;
+  const objects = mapData.objects || (mapData.objects = []);
+  const objId = intOrZero(els.addObjectIdInput.value);
+  if (!objId) {
+    setImportStatus("请先填写要添加的 obj。", "err");
+    return;
+  }
+  const next = normalizeObject({
+    scene_id: intOrZero(els.addSceneInput.value || 1),
+    obj_kind: 0,
+    key_id: nextNumericField(objects, "key_id"),
+    obj_id: objId,
+    seq_id: nextNumericField(objects, "seq_id"),
+    enc_mapdata_b64: writeEncMapdata(numberOrZero(els.addXInput.value), numberOrZero(els.addYInput.value), els.addFlipInput.checked),
+    source_class: "map-editor",
+  }, objects.length);
+  objects.push(next);
+  selectedObjectIndex = objects.length - 1;
+  mapData.exported_at = new Date().toISOString();
+  setImportStatus(`已添加对象 ${objectName(objId)}。`, "ok");
+  renderMapEditing({ preserveView: true });
+}
+
+async function loadObjectCatalog() {
+  try {
+    const response = await fetch("./exported-assets/object-catalog.json", { cache: "no-store" });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const rows = JSON.parse((await response.text()).replace(/^\uFEFF/, ""));
+    const byId = new Map();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const id = String(row.id ?? row.raw?.ID ?? "").trim();
+      if (!id || byId.has(id)) continue;
+      byId.set(id, {
+        id,
+        name: String(row.name ?? row.raw?.name ?? "").trim(),
+      });
+    }
+    objectCatalogById = byId;
+    objectCatalog = Array.from(byId.values()).sort((a, b) => Number(a.id) - Number(b.id));
+    els.objectCatalogList.innerHTML = "";
+    for (const item of objectCatalog) {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.label = item.name ? `${item.id} ${item.name}` : item.id;
+      els.objectCatalogList.appendChild(option);
+    }
+    els.addObjectHint.textContent = `${objectCatalog.length} objects`;
+    renderSelectedObjectPanel();
+    renderObjectsTable();
+  } catch (error) {
+    els.addObjectHint.textContent = "catalog 未加载";
+    console.warn("object catalog load failed", error);
   }
 }
 
@@ -654,6 +870,18 @@ els.formatPlayerJsonBtn.addEventListener("click", () => {
 els.formatMapJsonBtn.addEventListener("click", () => {
   if (syncMapJson()) renderMapJson();
 });
+[
+  els.editSceneInput,
+  els.editObjectIdInput,
+  els.editXInput,
+  els.editYInput,
+  els.editFlipInput,
+].forEach((input) => {
+  input.addEventListener("change", applySelectedObjectInputs);
+});
+els.rotateObjectBtn.addEventListener("click", rotateSelectedObject);
+els.deleteObjectBtn.addEventListener("click", deleteSelectedObject);
+els.addObjectBtn.addEventListener("click", addObjectFromInputs);
 els.exportPlayerBtn.addEventListener("click", () => {
   if (!syncPlayerJson()) return;
   const { errors } = validatePlayer();
@@ -695,7 +923,22 @@ document.addEventListener("drop", async (event) => {
   }
 });
 
+window.ManorPreview?.configureEditor?.({
+  enabled: true,
+  onSelect(index) {
+    selectObject(index, { fromPreview: true, preserveView: true });
+  },
+  onMove(index, placement, event) {
+    selectedObjectIndex = index;
+    updateObjectAt(index, placement, {
+      includeMapJson: event?.final !== false,
+      preserveView: true,
+    });
+  },
+});
+
 renderAll();
+loadObjectCatalog();
 
 window.MoleDataEditor = {
   loadPlayer(data, name = "browser-player") {
@@ -713,5 +956,8 @@ window.MoleDataEditor = {
   },
   getMap() {
     return clone(mapData);
+  },
+  selectObject(index) {
+    selectObject(Number(index), { preserveView: true });
   },
 };

@@ -105,6 +105,43 @@
                   <button id="previewMissingBtn" type="button" class="active">缺图占位</button>
                 </div>
               </div>
+              <div class="map-edit-bar">
+                <section class="map-edit-group selected-object-card">
+                  <div class="map-edit-title">
+                    <strong>所选对象</strong>
+                    <span id="selectedObjectLabel">未选择</span>
+                  </div>
+                  <div class="map-edit-fields">
+                    <label>scene<input id="editSceneInput" type="number" step="1" /></label>
+                    <label>obj<input id="editObjectIdInput" type="number" step="1" list="objectCatalogList" /></label>
+                    <label>x<input id="editXInput" type="number" step="1" /></label>
+                    <label>y<input id="editYInput" type="number" step="1" /></label>
+                    <label class="check-label"><input id="editFlipInput" type="checkbox" />flip</label>
+                  </div>
+                  <div class="map-edit-actions">
+                    <button id="rotateObjectBtn" type="button">旋转</button>
+                    <button id="deleteObjectBtn" type="button" class="danger">删除</button>
+                  </div>
+                </section>
+
+                <section class="map-edit-group add-object-card">
+                  <div class="map-edit-title">
+                    <strong>添加对象</strong>
+                    <span id="addObjectHint">object-catalog</span>
+                  </div>
+                  <div class="map-edit-fields">
+                    <label>scene<input id="addSceneInput" type="number" step="1" value="1" /></label>
+                    <label>obj<input id="addObjectIdInput" type="number" step="1" list="objectCatalogList" /></label>
+                    <label>x<input id="addXInput" type="number" step="1" value="12" /></label>
+                    <label>y<input id="addYInput" type="number" step="1" value="12" /></label>
+                    <label class="check-label"><input id="addFlipInput" type="checkbox" />flip</label>
+                  </div>
+                  <div class="map-edit-actions">
+                    <button id="addObjectBtn" type="button">添加</button>
+                  </div>
+                </section>
+                <datalist id="objectCatalogList"></datalist>
+              </div>
               <div class="map-canvas-wrap">
                 <canvas id="objectMap" role="img" aria-label="庄园对象实际摆放预览"></canvas>
                 <div id="previewTooltip" class="preview-tooltip" hidden></div>
@@ -132,6 +169,7 @@
                         <th>x</th>
                         <th>y</th>
                         <th>flip</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody id="objectsTable"></tbody>

@@ -24,6 +24,11 @@
   const MAP_LEFT_BEACH_COLOR = [227 / 255, 208 / 255, 146 / 255, 1];
   const MAP_BOUND_PADDING = 36;
   const MAP_MAX_ZOOM = 1.8;
+  const SELECTED_GLOW_PASSES = [
+    { expand: 22, color: [1, 0.75, 0.12, 0.14] },
+    { expand: 14, color: [1, 0.82, 0.18, 0.22] },
+    { expand: 7, color: [1, 0.95, 0.48, 0.34] },
+  ];
   const BACKGROUND_LAYER_X = 0;
   const BACKGROUND_LAYER_Y = 0;
   const PROPERTY_TABLES = new Set(["property", "propertyHV"]);
@@ -60,6 +65,13 @@
     dragging: false,
     pointer: null,
     hovered: null,
+    selectedIndex: null,
+    objectDragging: null,
+    editor: {
+      enabled: false,
+      onSelect: null,
+      onMove: null,
+    },
     needsFit: true,
   };
 
@@ -586,17 +598,18 @@
     return [[x1, y0], [x1, y1], [x0, y1], [x0, y0]];
   }
 
-  function spriteVertices(sprite, texture) {
+  function spriteVertices(sprite, texture, options = {}) {
     const trim = sprite.asset.trim || { x: 0, y: 0, width: sprite.width, height: sprite.height };
-    const x0 = sprite.x + trim.x;
-    const y0 = sprite.y + trim.y;
-    const x1 = x0 + trim.width;
-    const y1 = y0 + trim.height;
+    const expand = Math.max(0, num(options.expand, 0));
+    const x0 = sprite.x + trim.x - expand;
+    const y0 = sprite.y + trim.y - expand;
+    const x1 = sprite.x + trim.x + trim.width + expand;
+    const y1 = sprite.y + trim.y + trim.height + expand;
     const corners = sprite.flip
       ? [[x1, y0], [x0, y0], [x0, y1], [x1, y1]]
       : [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
     const uvs = uvCorners(sprite.asset, texture);
-    const color = [1, 1, 1, 1];
+    const color = options.color || [1, 1, 1, 1];
     const out = [];
     for (const index of [0, 1, 2, 0, 2, 3]) {
       pushVertex(out, corners[index][0], corners[index][1], uvs[index][0], uvs[index][1], color);
@@ -604,21 +617,26 @@
     return out;
   }
 
-  function footprintVertices(sprite) {
+  function selectedGlowVertices(sprite, texture) {
+    return SELECTED_GLOW_PASSES.flatMap((pass) => spriteVertices(sprite, texture, pass));
+  }
+
+  function footprintVertices(sprite, colorOverride = null) {
     const p = sprite.base;
     const w = Math.max(TILE_WIDTH, (sprite.lengthX + sprite.lengthY) * HALF_TILE_WIDTH);
     const h = Math.max(TILE_HEIGHT, (sprite.lengthX + sprite.lengthY) * HALF_TILE_HEIGHT);
     const x0 = p.x - w * 0.5;
     const x1 = p.x + w * 0.5;
-    const y0 = p.y - h * 0.42;
-    const y1 = p.y + h * 0.58;
-    const color = sprite.missing ? [0.72, 0.22, 0.16, 0.5] : [0.12, 0.48, 0.41, 0.35];
+    const y0 = p.y - h;
+    const yMid = p.y - h * 0.5;
+    const y1 = p.y;
+    const color = colorOverride || (sprite.missing ? [0.72, 0.22, 0.16, 0.5] : [0.12, 0.48, 0.41, 0.35]);
     const out = [];
     const points = [
       [p.x, y0],
-      [x1, p.y],
+      [x1, yMid],
       [p.x, y1],
-      [x0, p.y],
+      [x0, yMid],
     ];
     for (const index of [0, 1, 2, 0, 2, 3]) {
       pushVertex(out, points[index][0], points[index][1], 0, 0, color);
@@ -727,11 +745,21 @@
       drawBuffer(state.programs.color, state.buffers.color, data, gl.LINES, state.gridLines.length);
     }
 
+    const selected = state.sprites.find((sprite) => sprite.row.index === state.selectedIndex);
+    if (selected) {
+      const data = footprintVertices(selected, [1, 0.78, 0.18, 0.48]);
+      drawBuffer(state.programs.color, state.buffers.color, data, gl.TRIANGLES, 6);
+    }
+
     const sorted = state.sprites.slice().sort((a, b) => a.sortY - b.sortY || num(a.row.seq_id) - num(b.row.seq_id));
     for (const sprite of sorted) {
       if (sprite.asset) {
         try {
           const texture = await textureFor(sprite.asset.src);
+          if (sprite.row.index === state.selectedIndex) {
+            const glowData = selectedGlowVertices(sprite, texture);
+            drawBuffer(state.programs.texture, state.buffers.texture, glowData, gl.TRIANGLES, glowData.length / 8, texture.texture);
+          }
           const data = spriteVertices(sprite, texture);
           drawBuffer(state.programs.texture, state.buffers.texture, data, gl.TRIANGLES, 6, texture.texture);
           continue;
@@ -798,6 +826,10 @@
     };
   }
 
+  function roundPlacement(value) {
+    return Math.round(num(value));
+  }
+
   function pick(clientX, clientY) {
     const p = screenToWorld(clientX, clientY);
     const sorted = state.sprites.slice().sort((a, b) => b.sortY - a.sortY);
@@ -831,6 +863,50 @@
     `;
   }
 
+  function beginObjectDrag(event, sprite) {
+    const placement = sprite.row.placement || {};
+    const world = screenToWorld(event.clientX, event.clientY);
+    state.selectedIndex = sprite.row.index;
+    state.objectDragging = {
+      pointerId: event.pointerId,
+      index: sprite.row.index,
+      startWorld: world,
+      startPlacement: {
+        x: num(placement.x),
+        y: num(placement.y),
+        flip: !!placement.flip,
+      },
+      current: {
+        x: num(placement.x),
+        y: num(placement.y),
+        flip: !!placement.flip,
+      },
+    };
+    state.editor.onSelect?.(sprite.row.index, sprite.row);
+    state.canvas.classList.add("moving-object");
+    draw();
+  }
+
+  function updateObjectDrag(event, final = false) {
+    const drag = state.objectDragging;
+    if (!drag) return;
+    const world = screenToWorld(event.clientX, event.clientY);
+    const next = {
+      x: roundPlacement(drag.startPlacement.x + (world.y - drag.startWorld.y) / TILE_HEIGHT),
+      y: roundPlacement(drag.startPlacement.y + (world.x - drag.startWorld.x) / HALF_TILE_WIDTH),
+      flip: drag.startPlacement.flip,
+    };
+    drag.current = next;
+    state.editor.onMove?.(drag.index, next, { final });
+  }
+
+  function finishObjectDrag(event) {
+    if (!state.objectDragging) return;
+    updateObjectDrag(event, true);
+    state.objectDragging = null;
+    state.canvas.classList.remove("moving-object");
+  }
+
   function attachEvents() {
     state.fitBtn?.addEventListener("click", () => {
       state.needsFit = true;
@@ -854,11 +930,23 @@
     });
     state.canvas.addEventListener("pointerdown", (event) => {
       state.canvas.setPointerCapture(event.pointerId);
+      const picked = pick(event.clientX, event.clientY);
+      if (state.editor.enabled && picked) {
+        beginObjectDrag(event, picked);
+        event.preventDefault();
+        return;
+      }
       state.dragging = true;
       state.pointer = { x: event.clientX, y: event.clientY, panX: state.panX, panY: state.panY };
       state.canvas.classList.add("dragging");
     });
     state.canvas.addEventListener("pointermove", (event) => {
+      if (state.objectDragging) {
+        updateObjectDrag(event, false);
+        state.hovered = state.sprites.find((sprite) => sprite.row.index === state.objectDragging.index) || null;
+        renderTooltip(event);
+        return;
+      }
       if (state.dragging && state.pointer) {
         const dpr = Math.min(2, window.devicePixelRatio || 1);
         state.panX = state.pointer.panX + (event.clientX - state.pointer.x) * dpr;
@@ -868,14 +956,17 @@
       state.hovered = pick(event.clientX, event.clientY);
       renderTooltip(event);
     });
-    state.canvas.addEventListener("pointerup", () => {
+    state.canvas.addEventListener("pointerup", (event) => {
+      finishObjectDrag(event);
       state.dragging = false;
       state.canvas.classList.remove("dragging");
     });
     state.canvas.addEventListener("pointerleave", () => {
+      if (state.objectDragging) return;
       state.dragging = false;
       state.hovered = null;
       state.canvas.classList.remove("dragging");
+      state.canvas.classList.remove("moving-object");
       if (state.tooltip) state.tooltip.hidden = true;
     });
     state.canvas.addEventListener("wheel", (event) => {
@@ -916,8 +1007,9 @@
     }
   }
 
-  function render(rows) {
+  function render(rows, options = {}) {
     state.saveRows = Array.isArray(rows) ? rows : [];
+    if ("selectedIndex" in options) state.selectedIndex = Number.isInteger(options.selectedIndex) ? options.selectedIndex : null;
     if (!state.ready) return;
     state.sprites = state.saveRows.map(spriteFromRow).filter(Boolean);
     state.gridLines = buildGrid(state.sprites);
@@ -927,12 +1019,19 @@
     } else {
       setStatus(`WebGL 预览：地图 ${state.backgroundSprites.length} 块，${state.sprites.length} 个对象，${state.sprites.length - missing} 个匹配贴图，${missing} 个缺图占位。`);
     }
-    state.needsFit = true;
+    if (!options.preserveView) state.needsFit = true;
     draw();
   }
 
   window.ManorPreview = {
     render,
+    configureEditor(options = {}) {
+      state.editor = { ...state.editor, ...options };
+    },
+    selectObject(index) {
+      state.selectedIndex = Number.isInteger(index) ? index : null;
+      draw();
+    },
     fit() {
       state.needsFit = true;
       draw();
