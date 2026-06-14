@@ -254,8 +254,15 @@ function mapEditorSourceClass(objectId) {
 function mapEditorDefaultSceneId(objectId, fallback = 1) {
   const objId = intOrZero(objectId);
   const info = objectCatalogById.get(String(objId));
-  const type = intOrZero(info?.raw?.type);
+  const raw = info?.raw || {};
+  const restPlace = intOrZero(raw.rest_place);
+  if (restPlace > 0) return restPlace;
+  const type = intOrZero(raw.type);
   if (type === 15 || (objId >= 15001 && objId <= 15006)) return 6;
+  const shopType = intOrZero(raw.shop_type);
+  if (shopType === 2) return 4;
+  if (shopType === 1 && type === 1) return 2;
+  if (shopType === 1) return 3;
   return intOrZero(fallback || 1);
 }
 
@@ -917,6 +924,10 @@ function validateMap() {
     ["scene_id", "obj_kind", "key_id", "obj_id", "seq_id"].forEach((key) => {
       if (!Number.isFinite(Number(obj[key]))) errors.push(`objects[${index}].${key} 必须是数字。`);
     });
+    const expectedSceneId = mapEditorDefaultSceneId(obj.obj_id ?? obj.objectId, obj.scene_id);
+    if (Number.isFinite(Number(obj.scene_id)) && expectedSceneId > 0 && intOrZero(obj.scene_id) !== expectedSceneId) {
+      errors.push(`objects[${index}].scene_id=${obj.scene_id} 和物件 ${obj.obj_id} 的客户端 rest_place/类型不一致，建议为 ${expectedSceneId}。`);
+    }
     if (obj.enc_mapdata_b64 && byteLengthFromBase64(obj.enc_mapdata_b64) > 64 * 1024) {
       warnings.push(`objects[${index}].enc_mapdata_b64 超过建议单行 64KB 上限。`);
     }
