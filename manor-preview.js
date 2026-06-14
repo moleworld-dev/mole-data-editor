@@ -42,6 +42,8 @@
   const PROPERTY_TABLES = new Set(["property", "propertyHV"]);
   const NAME_TABLES = new Set(["zh-Hans.lproj_property_description", "zh-Hans.lproj_property_descriptionHV"]);
   const SKIPPED_BACKGROUND_IMAGES = new Set(["", "flower", "tree8"]);
+  const ASPRITE_TIME_UNIT_MS = 50;
+  const ANIMATION_REDRAW_MS = 80;
 
   const state = {
     ready: false,
@@ -55,6 +57,7 @@
     textureCache: new Map(),
     texturePromises: new Map(),
     textureFailures: new Set(),
+    aspriteByTexture: new Map(),
     atlasSizes: new Map(),
     gl: null,
     programs: null,
@@ -91,6 +94,9 @@
     },
     needsFit: true,
     drawSerial: 0,
+    animationRaf: 0,
+    animationDrawPending: false,
+    animationLastDraw: 0,
   };
 
   function text(value, fallback = "") {
@@ -114,6 +120,13 @@
 
   async function fetchJson(path) {
     const response = await fetch(path, { cache: "no-store" });
+    if (!response.ok) throw new Error(`${path}: ${response.status} ${response.statusText}`);
+    return JSON.parse((await response.text()).replace(/^\uFEFF/, ""));
+  }
+
+  async function fetchOptionalJson(path, fallback) {
+    const response = await fetch(path, { cache: "no-store" });
+    if (response.status === 404) return fallback;
     if (!response.ok) throw new Error(`${path}: ${response.status} ${response.statusText}`);
     return JSON.parse((await response.text()).replace(/^\uFEFF/, ""));
   }
@@ -219,13 +232,15 @@
   }
 
   async function buildAssetIndex() {
-    const [catalog, frames, backgroundRows] = await Promise.all([
+    const [catalog, frames, aspriteFrames, backgroundRows] = await Promise.all([
       fetchJson(`${ASSET_ROOT}object-catalog.json`),
       fetchJson(`${ASSET_ROOT}atlas-frames.json`),
+      fetchOptionalJson(`${ASSET_ROOT}asprite-frames.json`, []),
       fetchJson(`${ASSET_ROOT}tables/Background.json`),
     ]);
     state.objectInfo = mergeCatalog(catalog);
     state.frameByName = new Map(frames.map((frame) => [frame.frame_name, frame]));
+    state.aspriteByTexture = buildAspriteIndex(aspriteFrames);
 
     for (const info of state.objectInfo.values()) {
       info.md5FrameName = `${md5(info.id)}.png`;
@@ -258,6 +273,94 @@
     return text(name).replace(/\\/g, "/").replace(/\.pvr\.ccz$/i, ".png").replace(/\.pvr$/i, ".png");
   }
 
+  function aspriteTextureKey(texture) {
+    const png = text(texture?.png).replace(/\\/g, "/");
+    return /_asprite/i.test(png) ? png : "";
+  }
+
+  function buildAspriteIndex(items) {
+    const byTexture = new Map();
+    if (!Array.isArray(items)) return byTexture;
+    for (const item of items) {
+      const key = text(item.texture_png).replace(/\\/g, "/");
+      if (!key) continue;
+      byTexture.set(key, item);
+    }
+    return byTexture;
+  }
+
+  function aspriteFrameSequence(asprite) {
+    const frames = Array.isArray(asprite?.frames) ? asprite.frames.filter((frame) => frame?.rect?.w > 0 && frame?.rect?.h > 0) : [];
+    if (!frames.length) return null;
+    const byIndex = new Map(frames.map((frame) => [num(frame.index, -1), frame]));
+    const animations = Array.isArray(asprite.animations) ? asprite.animations : [];
+    const aframes = Array.isArray(asprite.aframes) ? asprite.aframes : [];
+    const animation = animations.find((item) => num(item.aframe_count, 0) > 0) || null;
+    const timedFrames = [];
+
+    if (animation && aframes.length) {
+      const start = num(animation.aframe_start, 0);
+      const count = num(animation.aframe_count, 0);
+      for (let i = 0; i < count; i += 1) {
+        const aframe = aframes[start + i];
+        const frame = aframe ? byIndex.get(num(aframe.frame, -1)) : null;
+        if (!frame) continue;
+        timedFrames.push({
+          frame,
+          duration: Math.max(1, num(aframe.time, 1)) * ASPRITE_TIME_UNIT_MS,
+        });
+      }
+    }
+
+    if (!timedFrames.length) {
+      for (const frame of frames) timedFrames.push({ frame, duration: ASPRITE_TIME_UNIT_MS });
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const item of timedFrames) {
+      const rect = item.frame.rect;
+      const bounds = item.frame.bounds || { x: 0, y: 0, w: rect.w, h: rect.h };
+      minX = Math.min(minX, num(bounds.x, 0));
+      minY = Math.min(minY, num(bounds.y, 0));
+      maxX = Math.max(maxX, num(bounds.x, 0) + num(bounds.w, rect.w));
+      maxY = Math.max(maxY, num(bounds.y, 0) + num(bounds.h, rect.h));
+    }
+    if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return null;
+
+    let at = 0;
+    const sequence = timedFrames.map((item) => {
+      const rect = item.frame.rect;
+      const bounds = item.frame.bounds || { x: 0, y: 0, w: rect.w, h: rect.h };
+      const out = {
+        at,
+        duration: item.duration,
+        trim: {
+          x: num(bounds.x, 0) - minX,
+          y: num(bounds.y, 0) - minY,
+          width: num(rect.w, 0),
+          height: num(rect.h, 0),
+        },
+        frame: {
+          rect: { x: num(rect.x, 0), y: num(rect.y, 0), w: num(rect.w, 0), h: num(rect.h, 0) },
+          rotated: false,
+          frame_name: `${asprite.name || "asprite"}#frame${item.frame.index ?? 0}`,
+        },
+      };
+      at += item.duration;
+      return out;
+    });
+
+    return {
+      frames: sequence,
+      duration: Math.max(ASPRITE_TIME_UNIT_MS, at),
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }
+
   function assetFromFrame(frame) {
     if (!frame) return null;
     const colorRect = parseRectText(frame.raw?.sourceColorRect);
@@ -270,6 +373,25 @@
         ? { x: colorRect.x, y: colorRect.y, width: colorRect.w, height: colorRect.h }
         : { x: 0, y: 0, width: num(frame.rect?.w, 96), height: num(frame.rect?.h, 96) },
       frame,
+    };
+  }
+
+  function aspritePreviewAsset(info) {
+    const key = aspriteTextureKey(info?.texture);
+    const asprite = key ? state.aspriteByTexture.get(key) : null;
+    const animation = aspriteFrameSequence(asprite);
+    const first = animation?.frames?.[0];
+    const rect = first?.frame?.rect;
+    if (!animation || !first || !rect) return null;
+    return {
+      kind: "atlas",
+      src: `${ASSET_ROOT}${key}`,
+      width: animation.width,
+      height: animation.height,
+      trim: first.trim,
+      frame: first.frame,
+      animation,
+      aspritePreview: true,
     };
   }
 
@@ -300,7 +422,7 @@
   }
 
   function assetForObject(info) {
-    return standaloneAsset(info) || frameAsset(info);
+    return aspritePreviewAsset(info) || standaloneAsset(info) || frameAsset(info);
   }
 
   function buildBackgroundSprites(rows) {
@@ -652,21 +774,40 @@
     out.push(x, y, u, v, color[0], color[1], color[2], color[3]);
   }
 
-  function uvCorners(asset, texture) {
-    if (!asset.frame) return [[0, 0], [1, 0], [1, 1], [0, 1]];
-    const rect = asset.frame.rect;
-    const width = asset.frame.rotated ? rect.h : rect.w;
-    const height = asset.frame.rotated ? rect.w : rect.h;
+  function uvCorners(asset, texture, drawState = currentAssetDraw(asset)) {
+    const frame = drawState.frame;
+    if (!frame) return [[0, 0], [1, 0], [1, 1], [0, 1]];
+    const rect = frame.rect;
+    const width = frame.rotated ? rect.h : rect.w;
+    const height = frame.rotated ? rect.w : rect.h;
     const x0 = rect.x / texture.width;
     const y0 = rect.y / texture.height;
     const x1 = (rect.x + width) / texture.width;
     const y1 = (rect.y + height) / texture.height;
-    if (!asset.frame.rotated) return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    if (!frame.rotated) return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
     return [[x1, y0], [x1, y1], [x0, y1], [x0, y0]];
   }
 
+  function currentAssetDraw(asset) {
+    const animation = asset?.animation;
+    if (!animation?.frames?.length || animation.duration <= 0) {
+      return { frame: asset?.frame || null, trim: asset?.trim || null };
+    }
+
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const time = now % animation.duration;
+    let current = animation.frames[0];
+    for (const frame of animation.frames) {
+      if (time < frame.at) break;
+      current = frame;
+      if (time < frame.at + frame.duration) break;
+    }
+    return current;
+  }
+
   function spriteVertices(sprite, texture, options = {}) {
-    const trim = sprite.asset.trim || { x: 0, y: 0, width: sprite.width, height: sprite.height };
+    const drawState = currentAssetDraw(sprite.asset);
+    const trim = drawState.trim || sprite.asset.trim || { x: 0, y: 0, width: sprite.width, height: sprite.height };
     const expand = Math.max(0, num(options.expand, 0));
     const x0 = sprite.x + trim.x - expand;
     const y0 = sprite.y + trim.y - expand;
@@ -675,7 +816,7 @@
     const corners = sprite.flip
       ? [[x1, y0], [x0, y0], [x0, y1], [x1, y1]]
       : [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-    const uvs = uvCorners(sprite.asset, texture);
+    const uvs = uvCorners(sprite.asset, texture, drawState);
     const color = options.color || [1, 1, 1, 1];
     const out = [];
     for (const index of [0, 1, 2, 0, 2, 3]) {
@@ -808,6 +949,37 @@
     addTextureSource(sources, editPreviewSprite()?.asset);
     for (const button of state.uiButtons) addTextureSource(sources, button.asset);
     return Array.from(sources);
+  }
+
+  function spriteHasAnimation(sprite) {
+    return !!sprite?.asset?.animation?.frames?.length && sprite.asset.animation.frames.length > 1;
+  }
+
+  function hasAnimatedSprites() {
+    if (state.showMap && state.backgroundSprites.some(spriteHasAnimation)) return true;
+    if (state.sprites.some(spriteHasAnimation)) return true;
+    return spriteHasAnimation(editPreviewSprite());
+  }
+
+  function syncAnimationLoop() {
+    if (!hasAnimatedSprites()) {
+      if (state.animationRaf) cancelAnimationFrame(state.animationRaf);
+      state.animationRaf = 0;
+      state.animationDrawPending = false;
+      return;
+    }
+    if (state.animationRaf) return;
+
+    const tick = (now) => {
+      state.animationRaf = requestAnimationFrame(tick);
+      if (state.animationDrawPending || now - state.animationLastDraw < ANIMATION_REDRAW_MS) return;
+      state.animationLastDraw = now;
+      state.animationDrawPending = true;
+      Promise.resolve(draw()).finally(() => {
+        state.animationDrawPending = false;
+      });
+    };
+    state.animationRaf = requestAnimationFrame(tick);
   }
 
   async function preloadDrawTextures() {
@@ -1259,6 +1431,7 @@
       setStatus(`WebGL 预览：地图 ${state.backgroundSprites.length} 块，${state.sprites.length} 个对象，${state.sprites.length - missing} 个匹配贴图，${missing} 个缺图占位。`);
     }
     if (!options.preserveView) state.needsFit = true;
+    syncAnimationLoop();
     draw();
   }
 

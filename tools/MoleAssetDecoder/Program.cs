@@ -55,6 +55,7 @@ Output:
   manifest.json              top-level export summary
   object-catalog.json        property/property_description rows keyed for future rendering
   atlas-frames.json          Cocos plist/asprite frame rectangles mapped to exported textures
+  asprite-frames.json        Mole ASprite module/frame rectangles mapped to exported textures
   tables/*.json              decoded plist/dat tables
   textures/png/*             source PNG/JPG plus decoded PVR/CCZ previews
   textures/pvr/*             decompressed PVR payloads from *.pvr.ccz
@@ -118,6 +119,7 @@ internal sealed partial class MoleAssetDecoder(DecodeOptions options)
     private readonly List<JsonObject> _textures = [];
     private readonly List<JsonObject> _tables = [];
     private readonly List<JsonObject> _atlasFrames = [];
+    private readonly List<JsonObject> _aspriteFrames = [];
     private readonly List<JsonObject> _objects = [];
     private readonly Dictionary<string, JsonNode?> _decodedTablesByBaseName = new(StringComparer.OrdinalIgnoreCase);
 
@@ -151,7 +153,14 @@ internal sealed partial class MoleAssetDecoder(DecodeOptions options)
             }
             else if (ext.EndsWith(".dat", StringComparison.Ordinal) || ext.EndsWith(".plist", StringComparison.Ordinal))
             {
-                ExportTable(entry);
+                if (IsAspriteDat(entry.Name))
+                {
+                    ExportAsprite(entry);
+                }
+                else
+                {
+                    ExportTable(entry);
+                }
             }
         }
 
@@ -159,6 +168,7 @@ internal sealed partial class MoleAssetDecoder(DecodeOptions options)
         BuildAtlasFrames();
         WriteJson(Path.Combine(options.OutputDirectory, "object-catalog.json"), _objects);
         WriteJson(Path.Combine(options.OutputDirectory, "atlas-frames.json"), _atlasFrames);
+        WriteJson(Path.Combine(options.OutputDirectory, "asprite-frames.json"), _aspriteFrames);
 
         var manifest = new JsonObject
         {
@@ -173,25 +183,32 @@ internal sealed partial class MoleAssetDecoder(DecodeOptions options)
                 ["tables"] = _tables.Count,
                 ["textures"] = _textures.Count,
                 ["atlas_frames"] = _atlasFrames.Count,
+                ["asprite_frames"] = _aspriteFrames.Count,
                 ["objects"] = _objects.Count,
             },
             ["tables"] = ToArray(_tables),
             ["textures"] = ToArray(_textures),
+            ["asprite_frames"] = ToArray(_aspriteFrames),
             ["outputs"] = new JsonObject
             {
                 ["object_catalog"] = "object-catalog.json",
                 ["atlas_frames"] = "atlas-frames.json",
+                ["asprite_frames"] = "asprite-frames.json",
             },
         };
         WriteJson(Path.Combine(options.OutputDirectory, "manifest.json"), manifest);
 
-        Console.WriteLine($"exported {_tables.Count} tables, {_textures.Count} textures, {_atlasFrames.Count} atlas frames, {_objects.Count} object rows");
+        Console.WriteLine($"exported {_tables.Count} tables, {_textures.Count} textures, {_atlasFrames.Count} atlas frames, {_aspriteFrames.Count} asprite files, {_objects.Count} object rows");
         Console.WriteLine(options.OutputDirectory);
     }
 
     private static bool IsAppPayload(string path) =>
         path.StartsWith("Payload/", StringComparison.OrdinalIgnoreCase) &&
         path.Contains(".app/", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAspriteDat(string name) =>
+        name.EndsWith(".dat", StringComparison.OrdinalIgnoreCase) &&
+        name.Contains("_asprite", StringComparison.OrdinalIgnoreCase);
 
     private void CopyImage(ZipArchiveEntry entry)
     {
@@ -325,6 +342,131 @@ internal sealed partial class MoleAssetDecoder(DecodeOptions options)
         }
         _tables.Add(record);
     }
+
+    private void ExportAsprite(ZipArchiveEntry entry)
+    {
+        var raw = ReadAllBytes(entry);
+        var baseName = Path.GetFileNameWithoutExtension(TextureRelativePath(entry.FullName));
+        var texture = TextureRelativePath(Path.ChangeExtension(entry.FullName, ".png"));
+        var record = new JsonObject
+        {
+            ["source"] = entry.FullName,
+            ["kind"] = "asprite-dat",
+            ["bytes"] = raw.Length,
+            ["decoded"] = false,
+        };
+
+        try
+        {
+            var asprite = AspriteDecoder.Decode(raw);
+            var item = AspriteToJson(entry.FullName, baseName, texture, asprite);
+            _aspriteFrames.Add(item);
+            record["decoded"] = true;
+            record["modules"] = asprite.Modules.Count;
+            record["fmodules"] = asprite.FModules.Count;
+            record["frames"] = asprite.Frames.Count;
+            record["animations"] = asprite.Animations.Count;
+        }
+        catch (Exception ex)
+        {
+            record["error"] = ex.Message;
+        }
+
+        _tables.Add(record);
+    }
+
+    private static JsonObject AspriteToJson(string source, string name, string texture, AspriteData asprite)
+    {
+        var modules = new JsonArray();
+        foreach (var module in asprite.Modules)
+        {
+            modules.Add(new JsonObject
+            {
+                ["index"] = module.Index,
+                ["image"] = module.Image,
+                ["x"] = module.X,
+                ["y"] = module.Y,
+                ["w"] = module.W,
+                ["h"] = module.H,
+            });
+        }
+
+        var fmodules = new JsonArray();
+        foreach (var fmodule in asprite.FModules)
+        {
+            fmodules.Add(new JsonObject
+            {
+                ["index"] = fmodule.Index,
+                ["module"] = fmodule.Module,
+                ["ox"] = fmodule.Ox,
+                ["oy"] = fmodule.Oy,
+                ["flags"] = fmodule.Flags,
+            });
+        }
+
+        var frames = new JsonArray();
+        foreach (var frame in asprite.Frames)
+        {
+            var frameModules = new JsonArray();
+            foreach (var module in frame.Modules) frameModules.Add(module);
+            frames.Add(new JsonObject
+            {
+                ["index"] = frame.Index,
+                ["module_count"] = frame.ModuleCount,
+                ["fmodule_start"] = frame.FModuleStart,
+                ["modules"] = frameModules,
+                ["rect"] = frame.TextureRect is null ? null : RectJson(frame.TextureRect),
+                ["bounds"] = frame.Bounds is null ? null : RectJson(frame.Bounds),
+            });
+        }
+
+        var aframes = new JsonArray();
+        foreach (var aframe in asprite.AFrames)
+        {
+            aframes.Add(new JsonObject
+            {
+                ["index"] = aframe.Index,
+                ["frame"] = aframe.Frame,
+                ["time"] = aframe.Time,
+                ["ox"] = aframe.Ox,
+                ["oy"] = aframe.Oy,
+                ["flags"] = aframe.Flags,
+            });
+        }
+
+        var animations = new JsonArray();
+        foreach (var animation in asprite.Animations)
+        {
+            animations.Add(new JsonObject
+            {
+                ["index"] = animation.Index,
+                ["aframe_count"] = animation.AFrameCount,
+                ["aframe_start"] = animation.AFrameStart,
+            });
+        }
+
+        return new JsonObject
+        {
+            ["source"] = source,
+            ["name"] = name,
+            ["texture"] = Path.GetFileName(texture),
+            ["texture_png"] = $"textures/png/{texture.Replace('\\', '/')}",
+            ["flags"] = asprite.Flags,
+            ["modules"] = modules,
+            ["fmodules"] = fmodules,
+            ["frames"] = frames,
+            ["aframes"] = aframes,
+            ["animations"] = animations,
+        };
+    }
+
+    private static JsonObject RectJson(AspriteRect rect) => new()
+    {
+        ["x"] = rect.X,
+        ["y"] = rect.Y,
+        ["w"] = rect.W,
+        ["h"] = rect.H,
+    };
 
     private void BuildObjectCatalog()
     {
@@ -588,6 +730,273 @@ internal sealed partial class MoleAssetDecoder(DecodeOptions options)
     [GeneratedRegex(@"-?\d+(?:\.\d+)?")]
     private static partial Regex NumberRegex();
 
+}
+
+internal sealed record AspriteRect(int X, int Y, int W, int H);
+internal sealed record AspriteModule(int Index, int Image, int X, int Y, int W, int H);
+internal sealed record AspriteFModule(int Index, int Module, int Ox, int Oy, int Flags);
+internal sealed record AspriteFrame(int Index, int ModuleCount, int FModuleStart, IReadOnlyList<int> Modules, AspriteRect? TextureRect, AspriteRect? Bounds);
+internal sealed record AspriteAFrame(int Index, int Frame, int Time, int Ox, int Oy, int Flags);
+internal sealed record AspriteAnimation(int Index, int AFrameCount, int AFrameStart);
+internal sealed record AspriteData(
+    uint Flags,
+    IReadOnlyList<AspriteModule> Modules,
+    IReadOnlyList<AspriteFModule> FModules,
+    IReadOnlyList<AspriteFrame> Frames,
+    IReadOnlyList<AspriteAFrame> AFrames,
+    IReadOnlyList<AspriteAnimation> Animations);
+
+internal static class AspriteDecoder
+{
+    public static AspriteData Decode(byte[] raw)
+    {
+        if (raw.Length < 8) throw new InvalidDataException("ASprite file is too short");
+
+        var data = raw.AsSpan();
+        var offset = 2;
+        var flags = ReadU32(data, ref offset);
+        var modules = ReadModules(data, flags, ref offset);
+        var fmodules = ReadFModules(data, flags, ref offset);
+        var frames = ReadFrames(data, flags, fmodules, modules, ref offset);
+        var aframes = ReadAFrames(data, flags, ref offset);
+        var animations = ReadAnimations(data, ref offset);
+        return new AspriteData(flags, modules, fmodules, frames, aframes, animations);
+    }
+
+    private static List<AspriteModule> ReadModules(ReadOnlySpan<byte> data, uint flags, ref int offset)
+    {
+        var count = ReadU16(data, ref offset);
+        var modules = new List<AspriteModule>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var image = ReadU8(data, ref offset);
+            if (image is 0xff or 0xfe) Skip(data, ref offset, 4);
+
+            var x = 0;
+            var y = 0;
+            if ((flags & 0x2) != 0)
+            {
+                x = ReadS16(data, ref offset);
+                y = ReadS16(data, ref offset);
+            }
+
+            if ((flags & 0x20) != 0)
+            {
+                x = ReadS16(data, ref offset);
+                y = ReadS16(data, ref offset);
+            }
+
+            var w = 0;
+            var h = 0;
+            if ((flags & 0x10) != 0)
+            {
+                w = ReadU16(data, ref offset);
+                h = ReadU16(data, ref offset);
+            }
+
+            modules.Add(new AspriteModule(i, image, x, y, w, h));
+        }
+
+        return modules;
+    }
+
+    private static List<AspriteFModule> ReadFModules(ReadOnlySpan<byte> data, uint flags, ref int offset)
+    {
+        var count = ReadU16(data, ref offset);
+        var fmodules = new List<AspriteFModule>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var module = ReadU8(data, ref offset);
+            int ox;
+            int oy;
+            if ((flags & 0x400) != 0)
+            {
+                ox = ReadS16(data, ref offset);
+                oy = ReadS16(data, ref offset);
+            }
+            else
+            {
+                ox = (sbyte)ReadU8(data, ref offset);
+                oy = (sbyte)ReadU8(data, ref offset);
+            }
+
+            var fmoduleFlags = ReadU8(data, ref offset);
+            fmodules.Add(new AspriteFModule(i, module, ox, oy, fmoduleFlags));
+        }
+
+        return fmodules;
+    }
+
+    private static List<AspriteFrame> ReadFrames(
+        ReadOnlySpan<byte> data,
+        uint flags,
+        IReadOnlyList<AspriteFModule> fmodules,
+        IReadOnlyList<AspriteModule> modules,
+        ref int offset)
+    {
+        var count = ReadU16(data, ref offset);
+        var headers = new (int ModuleCount, int FModuleStart)[count];
+        for (var i = 0; i < count; i++)
+        {
+            var moduleCount = ReadU8(data, ref offset);
+            _ = ReadU8(data, ref offset);
+            var fmoduleStart = ReadU16(data, ref offset);
+            headers[i] = (moduleCount, fmoduleStart);
+        }
+
+        var skippedRects = new AspriteRect?[count];
+        for (var i = 0; i < count; i++)
+        {
+            skippedRects[i] = new AspriteRect(
+                ReadS16(data, ref offset),
+                ReadS16(data, ref offset),
+                ReadS16(data, ref offset),
+                ReadS16(data, ref offset));
+        }
+
+        var rects = new AspriteRect?[count];
+        if ((flags & 0x2000) != 0)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                int x;
+                int y;
+                int w;
+                int h;
+                if ((flags & 0x400) != 0)
+                {
+                    x = ReadS16(data, ref offset);
+                    y = ReadS16(data, ref offset);
+                    w = ReadS16(data, ref offset);
+                    h = ReadS16(data, ref offset);
+                }
+                else
+                {
+                    x = (sbyte)ReadU8(data, ref offset);
+                    y = (sbyte)ReadU8(data, ref offset);
+                    w = ReadU8(data, ref offset);
+                    h = ReadU8(data, ref offset);
+                }
+
+                rects[i] = new AspriteRect(x, y, w, h);
+            }
+        }
+
+        var frames = new List<AspriteFrame>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var header = headers[i];
+            var moduleIndices = new List<int>(header.ModuleCount);
+            AspriteRect? textureRect = null;
+            var bounds = rects[i] ?? skippedRects[i];
+            for (var j = 0; j < header.ModuleCount; j++)
+            {
+                var fmoduleIndex = header.FModuleStart + j;
+                if ((uint)fmoduleIndex >= (uint)fmodules.Count) continue;
+                var moduleIndex = fmodules[fmoduleIndex].Module & 0xff;
+                if ((uint)moduleIndex >= (uint)modules.Count) continue;
+                moduleIndices.Add(moduleIndex);
+                textureRect ??= ModuleRect(modules[moduleIndex]);
+            }
+
+            frames.Add(new AspriteFrame(i, header.ModuleCount, header.FModuleStart, moduleIndices, textureRect, bounds));
+        }
+
+        return frames;
+    }
+
+    private static List<AspriteAFrame> ReadAFrames(ReadOnlySpan<byte> data, uint flags, ref int offset)
+    {
+        if (offset + 2 > data.Length) return [];
+
+        var count = ReadU16(data, ref offset);
+        var aframes = new List<AspriteAFrame>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var frame = ReadU8(data, ref offset);
+            var time = ReadU8(data, ref offset);
+            int ox;
+            int oy;
+            if ((flags & 0x40000) != 0)
+            {
+                ox = ReadS16(data, ref offset);
+                oy = ReadS16(data, ref offset);
+            }
+            else
+            {
+                ox = (sbyte)ReadU8(data, ref offset);
+                oy = (sbyte)ReadU8(data, ref offset);
+            }
+
+            var aframeFlags = ReadU8(data, ref offset);
+            aframes.Add(new AspriteAFrame(i, frame, time, ox, oy, aframeFlags));
+        }
+
+        return aframes;
+    }
+
+    private static List<AspriteAnimation> ReadAnimations(ReadOnlySpan<byte> data, ref int offset)
+    {
+        if (offset + 2 > data.Length) return [];
+
+        var count = ReadU16(data, ref offset);
+        var animations = new List<AspriteAnimation>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var aframeCount = ReadU8(data, ref offset);
+            _ = ReadU8(data, ref offset);
+            var aframeStart = ReadU16(data, ref offset);
+            animations.Add(new AspriteAnimation(i, aframeCount, aframeStart));
+        }
+
+        return animations;
+    }
+
+    private static AspriteRect ModuleRect(AspriteModule module) => new(module.X, module.Y, module.W, module.H);
+
+    private static void Skip(ReadOnlySpan<byte> data, ref int offset, int count)
+    {
+        Ensure(data, offset, count);
+        offset += count;
+    }
+
+    private static byte ReadU8(ReadOnlySpan<byte> data, ref int offset)
+    {
+        Ensure(data, offset, 1);
+        return data[offset++];
+    }
+
+    private static ushort ReadU16(ReadOnlySpan<byte> data, ref int offset)
+    {
+        Ensure(data, offset, 2);
+        var value = BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(offset, 2));
+        offset += 2;
+        return value;
+    }
+
+    private static short ReadS16(ReadOnlySpan<byte> data, ref int offset)
+    {
+        Ensure(data, offset, 2);
+        var value = BinaryPrimitives.ReadInt16LittleEndian(data.Slice(offset, 2));
+        offset += 2;
+        return value;
+    }
+
+    private static uint ReadU32(ReadOnlySpan<byte> data, ref int offset)
+    {
+        Ensure(data, offset, 4);
+        var value = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(offset, 4));
+        offset += 4;
+        return value;
+    }
+
+    private static void Ensure(ReadOnlySpan<byte> data, int offset, int count)
+    {
+        if (count < 0 || offset < 0 || offset + count > data.Length)
+        {
+            throw new InvalidDataException($"ASprite read past end at 0x{offset:x}");
+        }
+    }
 }
 
 internal static class DatDecoder
