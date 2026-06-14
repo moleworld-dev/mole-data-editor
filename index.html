@@ -103,9 +103,22 @@
                   <button id="previewMapBtn" type="button" class="active">地图</button>
                   <button id="previewGridBtn" type="button">网格</button>
                   <button id="previewMissingBtn" type="button" class="active">缺图占位</button>
+                  <div class="add-object-menu" id="addObjectMenu">
+                    <button id="toggleAddObjectMenuBtn" type="button" aria-expanded="false" aria-controls="addObjectDropdown">添加</button>
+                    <div id="addObjectDropdown" class="object-picker-popover" hidden>
+                      <div class="object-picker-head">
+                        <input id="objectSearchInput" type="search" placeholder="按名字或 ID 搜索" autocomplete="off" />
+                      </div>
+                      <div id="objectPickerViewport" class="object-picker-viewport">
+                        <canvas id="objectPickerCanvas" aria-label="对象选择列表"></canvas>
+                        <div id="objectPickerSpacer"></div>
+                      </div>
+                      <div id="objectPickerEmpty" class="object-picker-empty" hidden>未找到对象</div>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div class="map-edit-bar">
+              <div class="map-edit-state" hidden>
                 <section class="map-edit-group selected-object-card">
                   <div class="map-edit-title">
                     <strong>所选对象</strong>
@@ -210,7 +223,7 @@
     </dialog>
 
     <script src="./dat-parser.js?v=20260614-edit-front" charset="UTF-8"></script>
-    <script src="./manor-preview.js?v=20260614-edit-front" charset="UTF-8"></script>
-    <script src="./app.js?v=20260614-edit-front" charset="UTF-8"></script>
+    <script src="./manor-preview.js?v=20260614-picker-canvas" charset="UTF-8"></script>
+    <script src="./app.js?v=20260614-picker-canvas" charset="UTF-8"></script>
   </body>
 </html>

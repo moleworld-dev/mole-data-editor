@@ -1267,6 +1267,14 @@
     configureEditor(options = {}) {
       state.editor = { ...state.editor, ...options };
     },
+    assetForObjectInfo(info) {
+      if (!state.ready || !info) return assetForObject(info);
+      const normalized = {
+        ...info,
+        md5FrameName: info.md5FrameName || `${md5(text(info.id))}.png`,
+      };
+      return assetForObject(normalized);
+    },
     selectObject(index) {
       state.selectedIndex = Number.isInteger(index) ? index : null;
       draw();

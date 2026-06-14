@@ -19,6 +19,11 @@ let selectedObjectSnapshot = null;
 let selectedObjectDraft = null;
 let objectCatalog = [];
 let objectCatalogById = new Map();
+let objectSearchQuery = "";
+let objectPickerRenderSerial = 0;
+let objectPickerRows = [];
+let objectPickerRenderer = null;
+let objectPickerResizeObserver = null;
 let renderingSelectedObject = false;
 
 const els = {
@@ -59,6 +64,14 @@ const els = {
   addFlipInput: document.getElementById("addFlipInput"),
   addObjectBtn: document.getElementById("addObjectBtn"),
   addObjectHint: document.getElementById("addObjectHint"),
+  addObjectMenu: document.getElementById("addObjectMenu"),
+  toggleAddObjectMenuBtn: document.getElementById("toggleAddObjectMenuBtn"),
+  addObjectDropdown: document.getElementById("addObjectDropdown"),
+  objectSearchInput: document.getElementById("objectSearchInput"),
+  objectPickerViewport: document.getElementById("objectPickerViewport"),
+  objectPickerCanvas: document.getElementById("objectPickerCanvas"),
+  objectPickerSpacer: document.getElementById("objectPickerSpacer"),
+  objectPickerEmpty: document.getElementById("objectPickerEmpty"),
   objectCatalogList: document.getElementById("objectCatalogList"),
   sampleBtn: document.getElementById("sampleBtn"),
   importStatus: document.getElementById("importStatus"),
@@ -114,6 +127,14 @@ function intOrZero(value) {
   return Math.trunc(numberOrZero(value));
 }
 
+function hasChineseText(value) {
+  return /[\u3400-\u9fff]/.test(String(value || ""));
+}
+
+function isObjectIdSearch(query) {
+  return /^\d+$/.test(query.trim());
+}
+
 function formatNumber(value) {
   return Number.isFinite(Number(value)) ? Number(value).toLocaleString("zh-CN") : "-";
 }
@@ -167,6 +188,52 @@ function nextNumericField(objects, key) {
 function objectName(objectId) {
   const info = objectCatalogById.get(String(objectId));
   return info?.name ? `${objectId} ${info.name}` : `#${objectId}`;
+}
+
+function objectPlainName(objectId) {
+  const info = objectCatalogById.get(String(objectId));
+  return info?.name || `#${objectId}`;
+}
+
+function objectDisplayName(item) {
+  return item?.name || "未命名对象";
+}
+
+function objectAsset(item) {
+  return window.ManorPreview?.assetForObjectInfo?.(item) || null;
+}
+
+function objectImageSrc(item) {
+  const asset = objectAsset(item);
+  if (asset?.src) return asset.src;
+  const png = item?.texture?.png;
+  return png ? `./exported-assets/${String(png).replace(/\\/g, "/")}` : "";
+}
+
+function hasObjectImage(item) {
+  return !!objectImageSrc(item);
+}
+
+function isPlaceableObject(item) {
+  const raw = item?.raw || {};
+  const shopType = intOrZero(raw.shop_type);
+  const shopSubType = intOrZero(raw.shop_sub_type);
+  const lengthX = intOrZero(raw.length_x);
+  const lengthY = intOrZero(raw.length_y);
+  return (shopType === 1 || shopType === 2) && shopSubType >= 1 && shopSubType <= 6 && lengthX > 0 && lengthY > 0;
+}
+
+function filteredObjectCatalog() {
+  const query = objectSearchQuery.trim().toLowerCase();
+  const idSearch = isObjectIdSearch(query);
+  return objectCatalog.filter((item) => {
+    if (!isPlaceableObject(item)) return false;
+    const name = objectDisplayName(item).toLowerCase();
+    const hasVisibleBasics = !!item.name && hasObjectImage(item);
+    if (!query) return hasVisibleBasics;
+    if (idSearch) return item.id.includes(query);
+    return hasVisibleBasics && name.includes(query);
+  });
 }
 
 function objectPlacementAt(index) {
@@ -382,6 +449,338 @@ function renderSelectedObjectPanel() {
   els.editYInput.value = placement.valid ? placement.y : 0;
   els.editFlipInput.checked = !!placement.flip;
   renderingSelectedObject = false;
+}
+
+function renderObjectPicker() {
+  if (!els.objectPickerViewport || !els.objectPickerCanvas || !els.objectPickerSpacer) return;
+  objectPickerRenderSerial += 1;
+  if (els.addObjectDropdown.hidden) return;
+  objectPickerRows = filteredObjectCatalog();
+  els.objectPickerEmpty.hidden = objectPickerRows.length > 0;
+  els.objectPickerViewport.hidden = objectPickerRows.length === 0;
+  ensureObjectPickerRenderer();
+  layoutObjectPicker();
+  drawObjectPicker();
+}
+
+function ensureObjectPickerRenderer() {
+  if (objectPickerRenderer || !els.objectPickerCanvas) return objectPickerRenderer;
+  const canvas = els.objectPickerCanvas;
+  const gl = canvas.getContext("webgl", { alpha: true, antialias: true, premultipliedAlpha: true });
+  if (!gl) throw new Error("当前浏览器不可用 WebGL");
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  const vertex = `
+    attribute vec2 a_pos;
+    attribute vec2 a_uv;
+    uniform vec2 u_resolution;
+    varying vec2 v_uv;
+    void main() {
+      vec2 clip = (a_pos / u_resolution) * 2.0 - 1.0;
+      gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+      v_uv = a_uv;
+    }
+  `;
+  const fragment = `
+    precision mediump float;
+    uniform sampler2D u_texture;
+    uniform vec4 u_color;
+    varying vec2 v_uv;
+    void main() {
+      gl_FragColor = texture2D(u_texture, v_uv) * u_color;
+    }
+  `;
+  const compile = (type, source) => {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader));
+    return shader;
+  };
+  const program = gl.createProgram();
+  gl.attachShader(program, compile(gl.VERTEX_SHADER, vertex));
+  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragment));
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+
+  const white = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, white);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+
+  objectPickerRenderer = {
+    gl,
+    program,
+    buffer: gl.createBuffer(),
+    white,
+    textures: new Map(),
+    texturePromises: new Map(),
+    textTextures: new Map(),
+    layout: { width: 0, height: 0, columns: 1, cardW: 120, cardH: 142, gap: 10, totalH: 1 },
+  };
+
+  els.objectPickerViewport.addEventListener("scroll", () => drawObjectPicker());
+  canvas.addEventListener("click", onObjectPickerCanvasClick);
+  canvas.addEventListener("mousemove", onObjectPickerCanvasMove);
+  if (!objectPickerResizeObserver && "ResizeObserver" in window) {
+    objectPickerResizeObserver = new ResizeObserver(() => {
+      layoutObjectPicker();
+      drawObjectPicker();
+    });
+    objectPickerResizeObserver.observe(els.objectPickerViewport);
+  }
+  return objectPickerRenderer;
+}
+
+function layoutObjectPicker() {
+  const renderer = ensureObjectPickerRenderer();
+  if (!renderer || els.addObjectDropdown.hidden) return;
+  const viewport = els.objectPickerViewport;
+  const width = Math.max(1, viewport.clientWidth);
+  const height = Math.max(1, viewport.clientHeight || 420);
+  const gap = 10;
+  const minCardW = 112;
+  const columns = Math.max(1, Math.floor((width + gap) / (minCardW + gap)));
+  const cardW = Math.floor((width - gap * Math.max(0, columns - 1)) / columns);
+  const cardH = 142;
+  const totalRows = Math.ceil(objectPickerRows.length / columns);
+  const totalH = Math.max(1, totalRows * (cardH + gap));
+  renderer.layout = { width, height, columns, cardW, cardH, gap, totalH };
+  els.objectPickerSpacer.style.height = `${totalH}px`;
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  els.objectPickerCanvas.style.height = `${height}px`;
+  if (els.objectPickerCanvas.width !== Math.floor(width * dpr) || els.objectPickerCanvas.height !== Math.floor(height * dpr)) {
+    els.objectPickerCanvas.width = Math.floor(width * dpr);
+    els.objectPickerCanvas.height = Math.floor(height * dpr);
+  }
+}
+
+function colorParts(hex) {
+  const value = hex.replace("#", "");
+  const r = Number.parseInt(value.slice(0, 2), 16) / 255;
+  const g = Number.parseInt(value.slice(2, 4), 16) / 255;
+  const b = Number.parseInt(value.slice(4, 6), 16) / 255;
+  return [r, g, b, 1];
+}
+
+function pickerLoadImage(src) {
+  const image = new Image();
+  image.decoding = "async";
+  image.src = src;
+  return image.decode().then(() => image);
+}
+
+function pickerTextureFor(src) {
+  const renderer = ensureObjectPickerRenderer();
+  if (renderer.textures.has(src)) return renderer.textures.get(src);
+  if (!renderer.texturePromises.has(src)) {
+    renderer.texturePromises.set(src, pickerLoadImage(src).then((image) => {
+      const gl = renderer.gl;
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+      const item = { texture, width: image.naturalWidth, height: image.naturalHeight };
+      renderer.textures.set(src, item);
+      renderer.texturePromises.delete(src);
+      drawObjectPicker();
+      return item;
+    }).catch((error) => {
+      renderer.texturePromises.delete(src);
+      throw error;
+    }));
+  }
+  return null;
+}
+
+function pickerTextTexture(text, width) {
+  const renderer = ensureObjectPickerRenderer();
+  const key = `${Math.round(width)}:${text}`;
+  if (renderer.textTextures.has(key)) return renderer.textTextures.get(key);
+  const dpr = 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.floor(width * dpr));
+  canvas.height = 26 * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.font = '13px "Microsoft YaHei", "PingFang SC", Arial, sans-serif';
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#65777c";
+  let label = text;
+  while (ctx.measureText(label).width > width - 8 && label.length > 1) {
+    label = `${label.slice(0, -2)}…`;
+  }
+  ctx.fillText(label, width / 2, 13);
+  const gl = renderer.gl;
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+  const item = { texture, width, height: 26 };
+  renderer.textTextures.set(key, item);
+  return item;
+}
+
+function drawPickerQuad(texture, x, y, w, h, color = [1, 1, 1, 1], uvs = [[0, 0], [1, 0], [1, 1], [0, 1]]) {
+  const renderer = ensureObjectPickerRenderer();
+  const gl = renderer.gl;
+  const vertices = new Float32Array([
+    x, y, uvs[0][0], uvs[0][1],
+    x + w, y, uvs[1][0], uvs[1][1],
+    x, y + h, uvs[3][0], uvs[3][1],
+    x, y + h, uvs[3][0], uvs[3][1],
+    x + w, y, uvs[1][0], uvs[1][1],
+    x + w, y + h, uvs[2][0], uvs[2][1],
+  ]);
+  gl.bindBuffer(gl.ARRAY_BUFFER, renderer.buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STREAM_DRAW);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.uniform4fv(gl.getUniformLocation(renderer.program, "u_color"), color);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+function drawPickerRect(x, y, w, h, color) {
+  drawPickerQuad(ensureObjectPickerRenderer().white, x, y, w, h, colorParts(color));
+}
+
+function pickerAssetUvs(asset, texture) {
+  if (!asset?.frame?.rect) return [[0, 0], [1, 0], [1, 1], [0, 1]];
+  const rect = asset.frame.rect;
+  const width = asset.frame.rotated ? rect.h : rect.w;
+  const height = asset.frame.rotated ? rect.w : rect.h;
+  const x0 = rect.x / texture.width;
+  const y0 = rect.y / texture.height;
+  const x1 = (rect.x + width) / texture.width;
+  const y1 = (rect.y + height) / texture.height;
+  if (!asset.frame.rotated) return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  return [[x1, y0], [x1, y1], [x0, y1], [x0, y0]];
+}
+
+function pickerAssetSize(asset, texture) {
+  if (!asset?.frame?.rect) return { width: texture.width, height: texture.height };
+  const rect = asset.frame.rect;
+  return asset.frame.rotated
+    ? { width: Math.max(1, rect.h), height: Math.max(1, rect.w) }
+    : { width: Math.max(1, rect.w), height: Math.max(1, rect.h) };
+}
+
+function drawObjectPicker() {
+  const renderer = ensureObjectPickerRenderer();
+  if (!renderer || els.addObjectDropdown.hidden) return;
+  layoutObjectPicker();
+  const { gl, program, layout } = renderer;
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  gl.viewport(0, 0, Math.floor(layout.width * dpr), Math.floor(layout.height * dpr));
+  gl.clearColor(1, 1, 1, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(program);
+  gl.uniform2f(gl.getUniformLocation(program, "u_resolution"), layout.width, layout.height);
+  const pos = gl.getAttribLocation(program, "a_pos");
+  const uv = gl.getAttribLocation(program, "a_uv");
+  gl.enableVertexAttribArray(pos);
+  gl.enableVertexAttribArray(uv);
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 4 * 4, 0);
+  gl.vertexAttribPointer(uv, 2, gl.FLOAT, false, 4 * 4, 2 * 4);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
+
+  const scrollTop = els.objectPickerViewport.scrollTop;
+  const rowStride = layout.cardH + layout.gap;
+  const firstRow = Math.max(0, Math.floor(scrollTop / rowStride));
+  const lastRow = Math.min(Math.ceil(objectPickerRows.length / layout.columns), Math.ceil((scrollTop + layout.height) / rowStride) + 1);
+  for (let row = firstRow; row < lastRow; row += 1) {
+    for (let col = 0; col < layout.columns; col += 1) {
+      const index = row * layout.columns + col;
+      const item = objectPickerRows[index];
+      if (!item) continue;
+      const x = col * (layout.cardW + layout.gap);
+      const y = row * rowStride - scrollTop;
+      drawPickerRect(x, y, layout.cardW, layout.cardH, "#fbfcfc");
+      drawPickerRect(x, y, layout.cardW, 1, "#d8e1e3");
+      drawPickerRect(x, y + layout.cardH - 1, layout.cardW, 1, "#d8e1e3");
+      drawPickerRect(x, y, 1, layout.cardH, "#d8e1e3");
+      drawPickerRect(x + layout.cardW - 1, y, 1, layout.cardH, "#d8e1e3");
+      const imageX = x + 10;
+      const imageY = y + 10;
+      const imageW = layout.cardW - 20;
+      const imageH = 82;
+      drawPickerRect(imageX, imageY, imageW, imageH, "#f2f5f5");
+      const asset = objectAsset(item);
+      const texture = asset?.src ? pickerTextureFor(asset.src) : null;
+      if (asset && texture) {
+        const source = pickerAssetSize(asset, texture);
+        const scale = Math.min(1, imageW / source.width, imageH / source.height);
+        const drawW = Math.max(1, source.width * scale);
+        const drawH = Math.max(1, source.height * scale);
+        drawPickerQuad(
+          texture.texture,
+          imageX + (imageW - drawW) / 2,
+          imageY + (imageH - drawH) / 2,
+          drawW,
+          drawH,
+          [1, 1, 1, 1],
+          pickerAssetUvs(asset, texture),
+        );
+      } else if (!asset) {
+        const noImage = pickerTextTexture("无图", imageW);
+        drawPickerQuad(noImage.texture, imageX, imageY + 28, imageW, noImage.height);
+      }
+      const label = pickerTextTexture(objectDisplayName(item), layout.cardW - 12);
+      drawPickerQuad(label.texture, x + 6, y + 106, label.width, label.height);
+    }
+  }
+}
+
+function objectPickerIndexAtEvent(event) {
+  const renderer = ensureObjectPickerRenderer();
+  const rect = els.objectPickerCanvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top + els.objectPickerViewport.scrollTop;
+  const { columns, cardW, cardH, gap } = renderer.layout;
+  const row = Math.floor(y / (cardH + gap));
+  const col = Math.floor(x / (cardW + gap));
+  const localX = x - col * (cardW + gap);
+  const localY = y - row * (cardH + gap);
+  if (col < 0 || col >= columns || localX < 0 || localX > cardW || localY < 0 || localY > cardH) return -1;
+  const index = row * columns + col;
+  return index >= 0 && index < objectPickerRows.length ? index : -1;
+}
+
+function onObjectPickerCanvasClick(event) {
+  const index = objectPickerIndexAtEvent(event);
+  if (index >= 0) addObjectById(objectPickerRows[index].id);
+}
+
+function onObjectPickerCanvasMove(event) {
+  els.objectPickerCanvas.style.cursor = objectPickerIndexAtEvent(event) >= 0 ? "pointer" : "default";
+}
+
+function setObjectPickerOpen(open) {
+  if (!els.addObjectDropdown) return;
+  els.addObjectDropdown.hidden = !open;
+  els.toggleAddObjectMenuBtn?.setAttribute("aria-expanded", open ? "true" : "false");
+  els.toggleAddObjectMenuBtn?.classList.toggle("active", open);
+  if (open) {
+    renderObjectPicker();
+    requestAnimationFrame(() => els.objectSearchInput?.focus());
+  }
+}
+
+function addObjectById(objectId) {
+  els.addObjectIdInput.value = objectId;
+  addObjectFromInputs({ closePicker: true });
 }
 
 function renderPlayerJson() {
@@ -625,7 +1024,7 @@ function deleteSelectedObject() {
   renderMapEditing();
 }
 
-function addObjectFromInputs() {
+function addObjectFromInputs(options = {}) {
   if (!syncMapJson()) return;
   const objects = mapData.objects || (mapData.objects = []);
   const objId = intOrZero(els.addObjectIdInput.value);
@@ -647,7 +1046,8 @@ function addObjectFromInputs() {
   selectedObjectSnapshot = null;
   selectedObjectDraft = clone(next);
   mapData.exported_at = new Date().toISOString();
-  setImportStatus(`已添加对象 ${objectName(objId)}。`, "ok");
+  setImportStatus(`已添加对象 ${objectPlainName(objId)}。`, "ok");
+  if (options.closePicker) setObjectPickerOpen(false);
   renderMapEditing({ preserveView: true });
 }
 
@@ -659,14 +1059,37 @@ async function loadObjectCatalog() {
     const byId = new Map();
     for (const row of Array.isArray(rows) ? rows : []) {
       const id = String(row.id ?? row.raw?.ID ?? "").trim();
-      if (!id || byId.has(id)) continue;
-      byId.set(id, {
+      if (!id) continue;
+      const current = byId.get(id) || {
         id,
-        name: String(row.name ?? row.raw?.name ?? "").trim(),
-      });
+        names: [],
+        sources: [],
+        raw: {},
+        texture: null,
+        type: null,
+      };
+      const rowName = String(row.name ?? row.raw?.name ?? "").trim();
+      if (rowName && !current.names.includes(rowName)) current.names.push(rowName);
+      if (row.source_table && !current.sources.includes(row.source_table)) current.sources.push(row.source_table);
+      if (!current.texture && row.texture?.png) current.texture = row.texture;
+      if (current.type == null && row.type != null) current.type = row.type;
+      for (const [key, value] of Object.entries(row.raw || {})) {
+        if (current.raw[key] === undefined || current.raw[key] === null || current.raw[key] === "") {
+          current.raw[key] = value;
+        }
+      }
+      byId.set(id, current);
     }
-    objectCatalogById = byId;
-    objectCatalog = Array.from(byId.values()).sort((a, b) => Number(a.id) - Number(b.id));
+    objectCatalog = Array.from(byId.values())
+      .map((item) => ({
+        ...item,
+        name: item.names.find((name) => /[\u4e00-\u9fff]/.test(name) && item.sources.some((source) => source.includes("zh-Hans")))
+          || item.names.find(hasChineseText)
+          || item.names[0]
+          || "",
+      }))
+      .sort((a, b) => Number(a.id) - Number(b.id));
+    objectCatalogById = new Map(objectCatalog.map((item) => [item.id, item]));
     els.objectCatalogList.innerHTML = "";
     for (const item of objectCatalog) {
       const option = document.createElement("option");
@@ -675,6 +1098,7 @@ async function loadObjectCatalog() {
       els.objectCatalogList.appendChild(option);
     }
     els.addObjectHint.textContent = `${objectCatalog.length} objects`;
+    renderObjectPicker();
     renderSelectedObjectPanel();
     renderObjectsTable();
   } catch (error) {
@@ -953,6 +1377,24 @@ els.formatMapJsonBtn.addEventListener("click", () => {
 els.rotateObjectBtn.addEventListener("click", rotateSelectedObject);
 els.deleteObjectBtn.addEventListener("click", deleteSelectedObject);
 els.addObjectBtn.addEventListener("click", addObjectFromInputs);
+els.toggleAddObjectMenuBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setObjectPickerOpen(els.addObjectDropdown.hidden);
+});
+els.addObjectDropdown.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+els.objectSearchInput.addEventListener("input", () => {
+  objectSearchQuery = els.objectSearchInput.value;
+  renderObjectPicker();
+});
+document.addEventListener("click", (event) => {
+  if (els.addObjectDropdown.hidden || els.addObjectMenu.contains(event.target)) return;
+  setObjectPickerOpen(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !els.addObjectDropdown.hidden) setObjectPickerOpen(false);
+});
 els.exportPlayerBtn.addEventListener("click", () => {
   if (!syncPlayerJson()) return;
   const { errors } = validatePlayer();
