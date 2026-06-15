@@ -252,6 +252,7 @@ const MAP_EDITOR_CLASS_BY_TYPE = new Map([
   [6, "TMMapDataBuilding"],
   [7, "TMMapDataBuilding"],
   [12, "TMMapDataFirework"],
+  [16, "TMMapDataBuilding"],
   [30, "TMMapDataTransObject"],
   [45, "TMMapDataRewardBox"],
   [47, "TMMapDataRewardBox"],
