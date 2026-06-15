@@ -244,16 +244,22 @@ function cocoaNowSeconds() {
   return Date.now() / 1000 - 978307200;
 }
 
-const MAP_EDITOR_BASE_TYPES = new Set([1, 4, 14, 15]);
+const MAP_EDITOR_BASE_TYPES = new Set([1, 4, 8, 10, 14, 15, 18, 21, 22, 26, 31, 33, 36]);
 const MAP_EDITOR_CLASS_BY_TYPE = new Map([
   [2, "TMMapDataFarm"],
   [3, "TMMapDataBuilding"],
   [5, "TMMapDataSpacials"],
   [6, "TMMapDataBuilding"],
   [7, "TMMapDataBuilding"],
+  [9, "TMMapDataBuilding"],
   [12, "TMMapDataFirework"],
+  [13, "TMMapDataBuilding"],
   [16, "TMMapDataBuilding"],
+  [29, "TMMapDataBuilding"],
   [30, "TMMapDataTransObject"],
+  [32, "TMMapDataShop"],
+  [35, "TMMapDataApartment"],
+  [37, "TMMapDataShip"],
   [45, "TMMapDataRewardBox"],
   [47, "TMMapDataRewardBox"],
   [61, "TMMapDataWaterTower"],
