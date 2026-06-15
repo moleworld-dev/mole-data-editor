@@ -235,20 +235,41 @@ function hasObjectImage(item) {
 
 function isPlaceableObject(item) {
   const raw = item?.raw || {};
-  const shopType = intOrZero(raw.shop_type);
-  const shopSubType = intOrZero(raw.shop_sub_type);
   const lengthX = intOrZero(raw.length_x);
   const lengthY = intOrZero(raw.length_y);
-  return (shopType === 1 || shopType === 2) && shopSubType >= 1 && shopSubType <= 6 && lengthX > 0 && lengthY > 0;
+  return !!mapEditorClassForItem(item) && lengthX > 0 && lengthY > 0;
 }
 
 function cocoaNowSeconds() {
   return Date.now() / 1000 - 978307200;
 }
 
+const MAP_EDITOR_BASE_TYPES = new Set([1, 4, 14, 15]);
+const MAP_EDITOR_CLASS_BY_TYPE = new Map([
+  [2, "TMMapDataFarm"],
+  [3, "TMMapDataBuilding"],
+  [5, "TMMapDataSpacials"],
+  [6, "TMMapDataBuilding"],
+  [7, "TMMapDataBuilding"],
+  [12, "TMMapDataFirework"],
+  [30, "TMMapDataTransObject"],
+  [45, "TMMapDataRewardBox"],
+  [47, "TMMapDataRewardBox"],
+  [61, "TMMapDataWaterTower"],
+  [62, "TMMapDataYellowDuck"],
+]);
+
+function mapEditorClassForItem(item) {
+  const raw = item?.raw || {};
+  const type = intOrZero(raw.type);
+  if (MAP_EDITOR_BASE_TYPES.has(type)) return "TMMapDataBase";
+  if (MAP_EDITOR_CLASS_BY_TYPE.has(type)) return MAP_EDITOR_CLASS_BY_TYPE.get(type);
+  return "";
+}
+
 function mapEditorSourceClass(objectId) {
   const info = objectCatalogById.get(String(intOrZero(objectId)));
-  return intOrZero(info?.raw?.shop_type) === 1 ? "TMMapDataBuilding" : "TMMapDataBase";
+  return mapEditorClassForItem(info);
 }
 
 function mapEditorDefaultSceneId(objectId, fallback = 1) {
@@ -268,25 +289,64 @@ function mapEditorDefaultSceneId(objectId, fallback = 1) {
 
 function mapEditorSourceTemplate(objectId) {
   const objId = intOrZero(objectId);
-  if (mapEditorSourceClass(objId) === "TMMapDataBuilding") {
-    return {
-      __class: "TMMapDataBuilding",
-      objectId: objId,
-      baseTile: "{0, 0}",
-      isFlip: false,
-      beginTime: cocoaNowSeconds(),
-      buildingState: 4,
-      coolingTime: 0,
-      gameCoolTime: 0,
-      property: 0,
-    };
-  }
-  return {
-    __class: "TMMapDataBase",
+  const className = mapEditorSourceClass(objId);
+  if (!className) return null;
+  const base = {
+    __class: className,
     objectId: objId,
     baseTile: "{0, 0}",
     isFlip: false,
+    objectSequenceId: 0,
   };
+  if (className === "TMMapDataFarm") return { ...base, cropId: 0, beginTime: 0, farmState: 0 };
+  if (className === "TMMapDataBuilding") {
+    return { ...base, beginTime: cocoaNowSeconds(), buildingState: 4, coolingTime: 0, gameCoolTime: 0, property: 0 };
+  }
+  if (className === "TMMapDataSpacials") return { ...base, beginTime: 0, coolingTime: 0, objectState: 0 };
+  if (className === "TMMapDataFirework") return { ...base, isFired: false };
+  if (className === "TMMapDataTransObject") return { ...base, beginTime: 0, duration: 0 };
+  if (className === "TMMapDataShop") {
+    return { ...base, isShopping: false, isUpgrading: false, currentLevel: 1, property: 0, beginTime: 0, saleItemId: 0 };
+  }
+  if (className === "TMMapDataShip") {
+    return {
+      ...base,
+      isFixing: false,
+      isSailing: false,
+      searchMapId: 0,
+      onBoardMoleNum: 0,
+      shipState: 0,
+      beginDiscoverTime: 0,
+      beginFixTime: 0,
+      showGiftsList: [],
+    };
+  }
+  if (className === "TMMapDataRestaurant") {
+    return { ...base, property: 0, islandValue: 0, beginUpgradeTime: 0, currentLevel: 1, constructValue: 0, lastCoolTime: 0 };
+  }
+  if (className === "TMMapDataApartment") return { ...base, moleNumInWaitingQueue: 0, lastMoleFinishTrainingTime: 0 };
+  if (className === "TMMapDataSuperShellTree") return { ...base, purchaseTime: 0, harvestTimes: 0 };
+  if (className === "TMMapDataCafeShop") return { ...base, isNew: false };
+  if (className === "TMMapDataRewardBox") return { ...base, purchaseTime: 0, lastCoolTime: 0, outputTimes: 0, unreceivedRewards: 0 };
+  if (className === "TMMapDataYellowDuck") return { ...base, purchaseTime: 0, lastTransformTime: 0, touchTimes: 0, coolingTime: 0 };
+  if (className === "TMMapDataWaterTower") return { ...base, purchaseTime: 0, harvestTimes: 0, unreceivedRewards: 0 };
+  return base;
+}
+
+function mergeMapEditorTemplate(sourceItem, template) {
+  if (!template) return sourceItem;
+  if (!sourceItem || typeof sourceItem !== "object" || sourceItem.__class !== template.__class) return template;
+  return { ...template, ...sourceItem, __class: template.__class, objectId: template.objectId };
+}
+
+function mapEditorUnsupportedTypeMessage(objectId) {
+  return `Object ${intOrZero(objectId)} has no built-in map data type mapping.`;
+}
+
+function syncAddSceneInput() {
+  if (!els.addSceneInput || !els.addObjectIdInput) return;
+  const objId = intOrZero(els.addObjectIdInput.value);
+  els.addSceneInput.value = objId ? mapEditorDefaultSceneId(objId) : "";
 }
 
 function normalizeMapEditorObject(obj) {
@@ -294,21 +354,22 @@ function normalizeMapEditorObject(obj) {
   const sourceClass = String(obj.source_class || "");
   if (sourceClass !== "map-editor" && sourceClass !== "") return obj;
   const expectedClass = mapEditorSourceClass(obj.obj_id ?? obj.objectId);
+  if (!expectedClass) return obj;
   const expectedSceneId = mapEditorDefaultSceneId(obj.obj_id ?? obj.objectId, obj.scene_id);
+  const template = mapEditorSourceTemplate(obj.obj_id ?? obj.objectId);
+  const sourceItem = mergeMapEditorTemplate(obj.source_item, template);
   if (
-    obj.source_item
-    && typeof obj.source_item === "object"
-    && obj.source_item.__class === expectedClass
+    sourceItem
+    && obj.source_item === sourceItem
     && intOrZero(obj.scene_id) === expectedSceneId
   ) {
     return obj;
   }
-  const template = mapEditorSourceTemplate(obj.obj_id ?? obj.objectId);
   return {
     ...obj,
     scene_id: expectedSceneId,
     source_class: "map-editor",
-    source_item: obj.source_item?.__class === expectedClass ? obj.source_item : template,
+    source_item: sourceItem,
   };
 }
 
@@ -524,6 +585,7 @@ function renderSelectedObjectPanel() {
     controls.forEach((control) => {
       if (control) control.disabled = true;
     });
+    els.editSceneInput.readOnly = false;
     els.editSceneInput.value = "";
     els.editObjectIdInput.value = "";
     els.editXInput.value = "";
@@ -538,6 +600,7 @@ function renderSelectedObjectPanel() {
   controls.forEach((control) => {
     if (control) control.disabled = false;
   });
+  els.editSceneInput.readOnly = obj.source_class === "map-editor";
   els.editSceneInput.value = obj.scene_id;
   els.editObjectIdInput.value = obj.obj_id;
   els.editXInput.value = placement.valid ? placement.x : 0;
@@ -875,6 +938,7 @@ function setObjectPickerOpen(open) {
 
 function addObjectById(objectId) {
   els.addObjectIdInput.value = objectId;
+  syncAddSceneInput();
   addObjectFromInputs({ closePicker: true });
 }
 
@@ -966,6 +1030,7 @@ function renderAll({ includePlayerJson = true, includeMapJson = true } = {}) {
   renderObjectsTable();
   renderMap();
   renderSelectedObjectPanel();
+  syncAddSceneInput();
   renderValidation();
   if (includePlayerJson) renderPlayerJson();
   if (includeMapJson) renderMapJson();
@@ -977,6 +1042,7 @@ function renderMapEditing({ includeMapJson = true, preserveView = true } = {}) {
   renderObjectsTable();
   renderMap({ preserveView });
   renderSelectedObjectPanel();
+  syncAddSceneInput();
   renderValidation();
   if (includeMapJson) renderMapJson();
 }
@@ -1050,7 +1116,12 @@ function updateSelectedDraft(patch, options = {}) {
   const flip = patch.flip ?? !!placement.flip;
   if (patch.scene_id !== undefined) selectedObjectDraft.scene_id = intOrZero(patch.scene_id);
   if (patch.obj_id !== undefined) {
-    selectedObjectDraft.obj_id = intOrZero(patch.obj_id);
+    const nextObjectId = intOrZero(patch.obj_id);
+    if (selectedObjectDraft.source_class === "map-editor" && !mapEditorSourceClass(nextObjectId)) {
+      setImportStatus(mapEditorUnsupportedTypeMessage(nextObjectId), "err");
+      return false;
+    }
+    selectedObjectDraft.obj_id = nextObjectId;
     if (selectedObjectDraft.source_class === "map-editor") {
       selectedObjectDraft.scene_id = mapEditorDefaultSceneId(selectedObjectDraft.obj_id, selectedObjectDraft.scene_id);
       selectedObjectDraft.source_item = mapEditorSourceTemplate(selectedObjectDraft.obj_id);
@@ -1070,7 +1141,12 @@ function updateObjectAt(index, patch, options = {}) {
   const flip = patch.flip ?? !!placement.flip;
   if (patch.scene_id !== undefined) obj.scene_id = intOrZero(patch.scene_id);
   if (patch.obj_id !== undefined) {
-    obj.obj_id = intOrZero(patch.obj_id);
+    const nextObjectId = intOrZero(patch.obj_id);
+    if (obj.source_class === "map-editor" && !mapEditorSourceClass(nextObjectId)) {
+      setImportStatus(mapEditorUnsupportedTypeMessage(nextObjectId), "err");
+      return false;
+    }
+    obj.obj_id = nextObjectId;
     if (obj.source_class === "map-editor") {
       obj.scene_id = mapEditorDefaultSceneId(obj.obj_id, obj.scene_id);
       obj.source_item = mapEditorSourceTemplate(obj.obj_id);
@@ -1084,8 +1160,9 @@ function updateObjectAt(index, patch, options = {}) {
 
 function applySelectedObjectInputs() {
   if (renderingSelectedObject || !selectedDraftObject()) return;
+  const obj = selectedDraftObject();
   updateSelectedDraft({
-    scene_id: els.editSceneInput.value,
+    scene_id: obj?.source_class === "map-editor" ? undefined : els.editSceneInput.value,
     obj_id: els.editObjectIdInput.value,
     x: numberOrZero(els.editXInput.value),
     y: numberOrZero(els.editYInput.value),
@@ -1143,8 +1220,12 @@ function addObjectFromInputs(options = {}) {
     setImportStatus("请先填写要添加的 obj。", "err");
     return;
   }
+  if (!mapEditorSourceClass(objId)) {
+    setImportStatus(mapEditorUnsupportedTypeMessage(objId), "err");
+    return;
+  }
   const next = normalizeObject({
-    scene_id: mapEditorDefaultSceneId(objId, els.addSceneInput.value),
+    scene_id: mapEditorDefaultSceneId(objId),
     obj_kind: 0,
     key_id: nextNumericField(objects, "key_id"),
     obj_id: objId,
@@ -1214,6 +1295,7 @@ async function loadObjectCatalog() {
       els.objectCatalogList.appendChild(option);
     }
     els.addObjectHint.textContent = `${objectCatalog.length} objects`;
+    syncAddSceneInput();
     renderObjectPicker();
     renderSelectedObjectPanel();
     renderObjectsTable();
@@ -1485,6 +1567,8 @@ els.formatMapJsonBtn.addEventListener("click", () => {
 });
 els.rotateObjectBtn.addEventListener("click", rotateSelectedObject);
 els.deleteObjectBtn.addEventListener("click", deleteSelectedObject);
+els.addObjectIdInput.addEventListener("input", syncAddSceneInput);
+els.addObjectIdInput.addEventListener("change", syncAddSceneInput);
 els.addObjectBtn.addEventListener("click", addObjectFromInputs);
 els.toggleAddObjectMenuBtn.addEventListener("click", (event) => {
   event.stopPropagation();

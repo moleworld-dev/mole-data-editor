@@ -337,10 +337,10 @@
       for (const frame of frames) timedFrames.push({ frame, duration: ASPRITE_TIME_UNIT_MS, ox: 0, oy: 0 });
     }
 
-    let minX = 0;
-    let minY = 0;
-    let maxX = 0;
-    let maxY = 0;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
     for (const item of timedFrames) {
       const rect = item.frame.rect;
       const bounds = item.frame.bounds || { x: 0, y: 0, w: rect.w, h: rect.h };
@@ -517,20 +517,15 @@
     const lengthY = Math.max(1, num(raw.length_y, 1));
     const size = lengthX + lengthY;
     if (size < 1) return { x: 0.5, y: 0 };
-    const usesRoadAnchor = restPlace === "4";
-    if (usesRoadAnchor && asset?.aspritePreview) {
-      const offset = ((lengthX - lengthY) * TILE_WIDTH * 0.5) / Math.max(1, asset.width);
-      const baseX = flip ? -offset : offset;
-      const baseY = 1 - ((lengthX + lengthY) * TILE_HEIGHT * 0.5) / Math.max(1, asset.height);
-      return { x: baseX, y: baseY };
-    }
-    if (usesRoadAnchor && asset) return { x: 0.5, y: 0.5 };
     if (asset?.origin && asset.width > 0 && asset.height > 0) {
+      const originX = num(asset.origin.x, asset.width * 0.5) / asset.width;
       return {
-        x: num(asset.origin.x, asset.width * 0.5) / asset.width,
+        x: flip ? 1 - originX : originX,
         y: 1 - num(asset.origin.y, asset.height) / asset.height,
       };
     }
+    const usesRoadAnchor = restPlace === "4";
+    if (usesRoadAnchor && asset) return { x: 0.5, y: 0.5 };
     const baseX = lengthX / size;
     return { x: flip ? 1 - baseX : baseX, y: 0 };
   }

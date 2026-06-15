@@ -1444,8 +1444,22 @@
     if (className === "NSMutableArray") return ["NSMutableArray", "NSArray", "NSObject"];
     if (className === "NSArray") return ["NSArray", "NSObject"];
     if (className === "NSNumber") return ["NSNumber", "NSValue", "NSObject"];
-    if (className === "TMMapDataFarm") return ["TMMapDataFarm", "TMMapDataBase", "NSObject"];
-    if (className === "TMMapDataBuilding") return ["TMMapDataBuilding", "TMMapDataBase", "NSObject"];
+    if (
+      className === "TMMapDataFarm"
+      || className === "TMMapDataBuilding"
+      || className === "TMMapDataSpacials"
+      || className === "TMMapDataFirework"
+      || className === "TMMapDataShop"
+      || className === "TMMapDataShip"
+      || className === "TMMapDataRestaurant"
+      || className === "TMMapDataTransObject"
+      || className === "TMMapDataApartment"
+      || className === "TMMapDataSuperShellTree"
+      || className === "TMMapDataCafeShop"
+      || className === "TMMapDataRewardBox"
+      || className === "TMMapDataYellowDuck"
+      || className === "TMMapDataWaterTower"
+    ) return [className, "TMMapDataBase", "NSObject"];
     if (className === "TMMapDataBase") return ["TMMapDataBase", "NSObject"];
     return [className, "NSObject"];
   }
