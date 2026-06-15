@@ -513,12 +513,11 @@
   function anchorFor(info, flip, asset) {
     const raw = info?.raw || {};
     const restPlace = text(raw.rest_place);
-    const type = text(raw.type);
     const lengthX = Math.max(1, num(raw.length_x, 1));
     const lengthY = Math.max(1, num(raw.length_y, 1));
     const size = lengthX + lengthY;
     if (size < 1) return { x: 0.5, y: 0 };
-    const usesRoadAnchor = restPlace === "4" || (!restPlace && type === "4");
+    const usesRoadAnchor = restPlace === "4";
     if (usesRoadAnchor && asset?.aspritePreview) {
       const offset = ((lengthX - lengthY) * TILE_WIDTH * 0.5) / Math.max(1, asset.width);
       const baseX = flip ? -offset : offset;
