@@ -382,7 +382,7 @@ function filteredObjectCatalog() {
     const hasVisibleBasics = !!item.name && hasObjectImage(item);
     if (!query) return hasVisibleBasics;
     if (idSearch) return item.id.includes(query);
-    return hasVisibleBasics && name.includes(query);
+    return !!item.name && name.includes(query);
   });
 }
 
