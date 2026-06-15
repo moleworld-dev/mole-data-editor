@@ -44,7 +44,131 @@
   const SKIPPED_BACKGROUND_IMAGES = new Set(["", "flower", "tree8"]);
   const ASPRITE_OBJECT_OVERRIDES = new Map([
     ["14274", { texture: "textures/png/lion_aspriteiPad.png", animationIndex: 0 }],
+    ["14196", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 3 }],
+    ["14203", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 0 }],
+    ["14204", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 1 }],
+    ["14223", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 2 }],
+    ["16405", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 9 }],
+    ["16406", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 10 }],
+    ["16407", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 12 }],
+    ["16408", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 11 }],
+    ["16409", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 5 }],
+    ["16410", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 6 }],
+    ["16411", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 8 }],
+    ["16412", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 7 }],
     ["16413", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 14 }],
+    ["16415", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 13 }],
+    ["14272", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 9 }],
+    ["14504", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 17 }],
+    ["16134", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 2 }],
+    ["16135", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 1 }],
+    ["16156", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 5 }],
+    ["16157", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 4 }],
+    ["16159", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 7 }],
+    ["16160", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 6 }],
+    ["16166", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 10 }],
+    ["16167", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 11 }],
+    ["16185", { texture: "textures/png/share3_scene_aspriteiPad.png", animationIndex: 15 }],
+    ["16204", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 0 }],
+    ["16215", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 10 }],
+    ["16216", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 8 }],
+    ["16217", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 9 }],
+    ["16218", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 4 }],
+    ["16219", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 5 }],
+    ["16220", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 6 }],
+    ["16221", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 7 }],
+    ["16242", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 11 }],
+    ["16243", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 13 }],
+    ["16244", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 12 }],
+    ["16255", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 16 }],
+    ["16256", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 14 }],
+    ["16275", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 17 }],
+    ["16285", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 5 }],
+    ["16286", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 2 }],
+    ["16287", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 3 }],
+    ["16288", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 4 }],
+    ["16301", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 7 }],
+    ["16307", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 10 }],
+    ["16308", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 8 }],
+    ["16322", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 12 }],
+    ["16323", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 11 }],
+    ["16334", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 17 }],
+    ["16337", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 13 }],
+    ["16338", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 15 }],
+    ["16339", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 16 }],
+    ["16340", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 14 }],
+    ["16346", { texture: "textures/png/share5_scene_aspriteiPad.png", animationIndex: 18 }],
+    ["22013", { texture: "textures/png/share4_scene_aspriteiPad.png", animationIndex: 15 }],
+    ["14275", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 14 }],
+    ["14290", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 18 }],
+    ["14511", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 6 }],
+    ["14803", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 12 }],
+    ["14977", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 0 }],
+    ["14981", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 19 }],
+    ["16007", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 12 }],
+    ["16012", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 7 }],
+    ["16013", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 8 }],
+    ["16014", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 9 }],
+    ["16015", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 10 }],
+    ["16016", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 11 }],
+    ["16041", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 16 }],
+    ["16099", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 31 }],
+    ["16100", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 25 }],
+    ["16101", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 27 }],
+    ["16109", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 24 }],
+    ["16118", { texture: "textures/png/share2_scene_aspriteiPad.png", animationIndex: 33 }],
+    ["16367", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 0 }],
+    ["16369", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 28 }],
+    ["22008", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 0 }],
+    ["22009", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 3 }],
+    ["22010", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 4 }],
+    ["22017", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 5 }],
+    ["22022", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 7 }],
+    ["22023", { texture: "textures/png/share_scene_aspriteiPad.png", animationIndex: 8 }],
+    ["32042", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 5 }],
+    ["32043", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 10 }],
+    ["32044", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 11 }],
+    ["32045", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 12 }],
+    ["32046", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 13 }],
+    ["32047", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 18 }],
+    ["32049", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 14 }],
+    ["32050", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 8 }],
+    ["32064", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 20 }],
+    ["32065", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 24 }],
+    ["32066", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 22 }],
+    ["32067", { texture: "textures/png/holiday_aspriteiPad.png", animationIndex: 27 }],
+    ["14216", { texture: "textures/png/mainvillage_aspriteiPad.png", animationIndex: 13 }],
+    ["14260", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 22 }],
+    ["14261", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 23 }],
+    ["14265", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 31 }],
+    ["14267", { texture: "textures/png/mainvillage_aspriteiPad.png", animationIndex: 14 }],
+    ["14268", { texture: "textures/png/mainvillage_aspriteiPad.png", animationIndex: 15 }],
+    ["14288", { texture: "textures/png/mainvillage_aspriteiPad.png", animationIndex: 23 }],
+    ["14294", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 0 }],
+    ["14302", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 1 }],
+    ["14303", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 2 }],
+    ["14304", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 3 }],
+    ["14305", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 4 }],
+    ["14808", { texture: "textures/png/mainvillage_aspriteiPad.png", animationIndex: 7 }],
+    ["14809", { texture: "textures/png/mainvillage_aspriteiPad.png", animationIndex: 18 }],
+    ["14940", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 18 }],
+    ["14947", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 20 }],
+    ["14948", { texture: "textures/png/mainvillage2_aspriteiPad.png", animationIndex: 21 }],
+    ["14963", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 1 }],
+    ["14985", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 2 }],
+    ["14986", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 4 }],
+    ["14987", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 5 }],
+    ["16017", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 7 }],
+    ["16018", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 8 }],
+    ["16019", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 9 }],
+    ["16020", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 10 }],
+    ["16071", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 11 }],
+    ["16076", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 23 }],
+    ["16077", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 24 }],
+    ["16140", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 22 }],
+    ["16145", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 16 }],
+    ["16146", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 20 }],
+    ["16147", { texture: "textures/png/mainvillage3_aspriteiPad.png", animationIndex: 18 }],
   ]);
   const ASPRITE_TIME_UNIT_MS = 50;
   const ANIMATION_REDRAW_MS = 80;
@@ -312,7 +436,7 @@
     return byTexture;
   }
 
-  function aspriteFrameSequence(asprite, animationIndex = null) {
+  function aspriteFrameSequence(asprite, selection = null) {
     const frames = Array.isArray(asprite?.frames) ? asprite.frames.filter((frame) => frame?.rect?.w > 0 && frame?.rect?.h > 0) : [];
     if (!frames.length) return null;
     const byIndex = new Map(frames.map((frame) => [num(frame.index, -1), frame]));
@@ -320,6 +444,8 @@
     const fmodules = Array.isArray(asprite.fmodules) ? asprite.fmodules : [];
     const animations = Array.isArray(asprite.animations) ? asprite.animations : [];
     const aframes = Array.isArray(asprite.aframes) ? asprite.aframes : [];
+    const animationIndex = typeof selection === "object" ? selection?.animationIndex : selection;
+    const frameIndex = typeof selection === "object" ? selection?.frameIndex : null;
     const selectedAnimationIndex = animationIndex == null ? null : num(animationIndex, -1);
     const animation = (selectedAnimationIndex >= 0
       ? animations.find((item) => num(item.index, -1) === selectedAnimationIndex)
@@ -328,7 +454,12 @@
       || null;
     const timedFrames = [];
 
-    if (animation && aframes.length) {
+    if (frameIndex != null) {
+      const frame = byIndex.get(num(frameIndex, -1));
+      if (frame) timedFrames.push({ frame, duration: ASPRITE_TIME_UNIT_MS, ox: 0, oy: 0 });
+    }
+
+    if (!timedFrames.length && animation && aframes.length) {
       const start = num(animation.aframe_start, 0);
       const count = num(animation.aframe_count, 0);
       for (let i = 0; i < count; i += 1) {
@@ -429,10 +560,10 @@
     };
   }
 
-  function aspriteAssetFromTexture(texturePng, animationIndex = null) {
+  function aspriteAssetFromTexture(texturePng, selection = null) {
     const key = text(texturePng).replace(/\\/g, "/");
     const asprite = key ? state.aspriteByTexture.get(key) : null;
-    const animation = aspriteFrameSequence(asprite, animationIndex);
+    const animation = aspriteFrameSequence(asprite, selection);
     const first = animation?.frames?.[0];
     const rect = first?.frame?.rect;
     if (!animation || !first || !rect) return null;
@@ -471,7 +602,7 @@
 
   function aspriteOverrideAsset(info) {
     const override = ASPRITE_OBJECT_OVERRIDES.get(text(info?.id).trim());
-    return override ? aspriteAssetFromTexture(override.texture, override.animationIndex) : null;
+    return override ? aspriteAssetFromTexture(override.texture, override) : null;
   }
 
   function frameAsset(info) {
