@@ -930,6 +930,33 @@
     return out;
   }
 
+  function isMapObjectScene(value) {
+    return Array.isArray(value) && value.some((item) => item && typeof item === "object" && "objectId" in item);
+  }
+
+  function mapRootEntriesFromDecoded(decoded) {
+    const root = archiveRootDictionary(decoded.plist);
+    const keys = root?.["NS.keys"];
+    const values = root?.["NS.objects"];
+    if (!Array.isArray(keys) || !Array.isArray(values)) {
+      return Object.entries(decoded.tree || {}).filter(([key]) => key !== "__class").map(([key, value]) => ({ key, value }));
+    }
+    return keys.map((keyRef, index) => ({
+      key: String(archiveValueToTree(decoded.plist, keyRef)),
+      value: archiveValueToMapTree(decoded.plist, values[index]),
+    }));
+  }
+
+  function mapHiddenFromDecoded(decoded) {
+    const entries = mapRootEntriesFromDecoded(decoded);
+    return {
+      scene_order: entries.map((entry) => String(entry.key)),
+      root_entries: entries
+        .filter((entry) => !isMapObjectScene(entry.value))
+        .map((entry) => ({ key: String(entry.key), value: clonePlain(entry.value) })),
+    };
+  }
+
   function userDatToPlayerData(decoded, source = "local-dat") {
     const user = decoded.tree || {};
     const hidden = {
@@ -972,9 +999,8 @@
       version: 1,
       exported_at: new Date().toISOString(),
       source,
-      map_blob_b64: bytesToBase64(await gzipBytes(decoded.plistBytes)),
-      map_plist_b64: bytesToBase64(decoded.plistBytes),
       map_encrypted: decoded.encrypted,
+      map_hidden: mapHiddenFromDecoded(decoded),
       objects: extractMapObjects(decoded.tree),
     };
   }
@@ -1049,8 +1075,7 @@
     const mapBlobBytes = isGzip(inputBytes) ? inputBytes : await gzipBytes(decoded.plistBytes);
     return {
       objects: extractMapObjects(decoded.tree),
-      map_blob_b64: bytesToBase64(mapBlobBytes),
-      map_plist_b64: bytesToBase64(decoded.plistBytes),
+      map_hidden: mapHiddenFromDecoded(decoded),
       encrypted: decoded.encrypted,
       report: {
         kind: decoded.kind,
@@ -1329,6 +1354,36 @@
     return out;
   }
 
+  function archiveValueToMapTree(plist, value, depth = 0) {
+    if (depth > 48) return null;
+    const objects = plist?.$objects;
+    const uid = uidOf(value);
+    if (uid != null) return archiveValueToMapTree(plist, objects?.[uid], depth + 1);
+    if (Array.isArray(value)) return value.map((item) => archiveValueToMapTree(plist, item, depth + 1));
+    if (!value || typeof value !== "object") return value;
+    if (isDataObject(value) || isRealObject(value)) return clonePlain(value);
+
+    const cls = archiveClassName(objects, value);
+    if (cls === "NSNumber") return numberValue(value, 0);
+    if (Array.isArray(value["NS.keys"]) && Array.isArray(value["NS.objects"])) {
+      const plain = {};
+      value["NS.keys"].forEach((keyRef, index) => {
+        const key = archiveValueToMapTree(plist, keyRef, depth + 1);
+        plain[String(key)] = archiveValueToMapTree(plist, value["NS.objects"][index], depth + 1);
+      });
+      return plain;
+    }
+    if (Array.isArray(value["NS.objects"])) {
+      return value["NS.objects"].map((item) => archiveValueToMapTree(plist, item, depth + 1));
+    }
+    const out = {};
+    if (cls) out.__class = cls;
+    for (const [entryKey, child] of Object.entries(value)) {
+      if (entryKey !== "$class") out[entryKey] = archiveValueToMapTree(plist, child, depth + 1);
+    }
+    return out;
+  }
+
   function playerDataToDatBytes(playerData) {
     const builder = createArchiveBuilder();
     const rootIndex = addTreeValueOriginalOrder(builder, playerDataToUserTree(playerData));
@@ -1383,59 +1438,42 @@
     return Object.fromEntries([...scenes.entries()].sort((a, b) => Number(a[0]) - Number(b[0])));
   }
 
-  function mapArchiveBaseTree(mapData) {
-    if (mapData?.map_plist_b64) {
-      try {
-        return clonePlain(decodeDatBytes(base64ToBytes(mapData.map_plist_b64)).tree);
-      } catch {
-        // Fall through to a minimal map tree if the stored source plist is not usable.
-      }
-    }
-    return { __class: "NSMutableDictionary" };
-  }
-
-  function isMapObjectScene(value) {
-    return Array.isArray(value) && value.some((item) => item && typeof item === "object" && "objectId" in item);
-  }
-
   function mergedMapTree(mapData) {
-    const tree = mapArchiveBaseTree(mapData);
-    if (!tree || typeof tree !== "object" || Array.isArray(tree)) return mapDataToTree(mapData);
     const nextScenes = mapDataToTree(mapData);
+    const hidden = mapData?.map_hidden && typeof mapData.map_hidden === "object" ? mapData.map_hidden : {};
+    const rootEntries = Array.isArray(hidden.root_entries) ? hidden.root_entries : [];
+    const sceneOrder = Array.isArray(hidden.scene_order) ? hidden.scene_order.map(String) : [];
+    const rootEntryMap = new Map(rootEntries
+      .filter((entry) => entry && typeof entry === "object" && "key" in entry)
+      .map((entry) => [String(entry.key), entry.value]));
     const entries = [];
     const seen = new Set();
-    for (const key of mapArchiveRootKeyOrder(mapData)) {
-      if (!(key in tree)) continue;
-      const value = tree[key];
-      entries.push([key, isMapObjectScene(value) ? (nextScenes[key] || []) : value]);
-      seen.add(key);
+
+    for (const key of sceneOrder) {
+      if (Object.prototype.hasOwnProperty.call(nextScenes, key)) {
+        entries.push([key, nextScenes[key]]);
+        seen.add(key);
+      } else if (rootEntryMap.has(key)) {
+        entries.push([key, clonePlain(rootEntryMap.get(key))]);
+        seen.add(key);
+      }
     }
+
     for (const [key, value] of Object.entries(nextScenes)) {
       if (!seen.has(key)) {
         entries.push([key, value]);
         seen.add(key);
       }
     }
-    for (const [key, value] of Object.entries(tree)) {
-      if (key !== "__class" && !seen.has(key)) entries.push([key, value]);
+
+    for (const [key, value] of rootEntryMap.entries()) {
+      if (!seen.has(key)) entries.push([key, clonePlain(value)]);
     }
+
     return {
-      __class: tree.__class || "NSMutableDictionary",
+      __class: "NSMutableDictionary",
       __entries: entries,
     };
-  }
-
-  function mapArchiveRootKeyOrder(mapData) {
-    if (!mapData?.map_plist_b64) return [];
-    try {
-      const decoded = decodeDatBytes(base64ToBytes(mapData.map_plist_b64));
-      const objects = decoded.plist?.$objects;
-      const root = archiveRootDictionary(decoded.plist);
-      if (!Array.isArray(objects) || !Array.isArray(root?.["NS.keys"])) return [];
-      return root["NS.keys"].map((ref) => archiveKeyText(objects, ref)).filter((key) => key != null);
-    } catch {
-      return [];
-    }
   }
 
   function archiveClassesFor(className) {
@@ -1560,11 +1598,6 @@
     const rootUid = uidOf(plist?.$top?.root);
     const root = Array.isArray(objects) && rootUid != null ? objects[rootUid] : null;
     return root && typeof root === "object" ? root : null;
-  }
-
-  function archiveKeyText(objects, ref) {
-    const uid = uidOf(ref);
-    return uid == null ? null : String(objects[uid]);
   }
 
   function mapDataToDatBytes(mapData) {

@@ -132,7 +132,6 @@ function createEmptyMapData() {
     version: SAVE_VERSION,
     exported_at: new Date().toISOString(),
     source: "local",
-    map_blob_b64: null,
     objects: [],
   };
 }
@@ -455,18 +454,29 @@ function normalizeObject(obj = {}, index = 0) {
   return normalizeMapEditorObject(normalized);
 }
 
+function normalizeMapHidden(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const out = {};
+  if (Array.isArray(input.scene_order)) out.scene_order = input.scene_order.map((key) => String(key));
+  if (Array.isArray(input.root_entries)) {
+    out.root_entries = input.root_entries
+      .filter((entry) => entry && typeof entry === "object" && "key" in entry)
+      .map((entry) => ({ key: String(entry.key), value: entry.value === undefined ? null : clone(entry.value) }));
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 function normalizeMapData(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("地图 JSON 顶层必须是对象。");
-  const mapBlob = input.map_blob_b64 ?? input.user_info?.map_blob_b64 ?? null;
   const objects = Array.isArray(input.objects) ? input.objects.map(normalizeObject) : [];
+  const mapHidden = normalizeMapHidden(input.map_hidden ?? input.mapHidden);
   return {
     format: MAP_FORMAT,
     version: SAVE_VERSION,
     exported_at: input.exported_at || new Date().toISOString(),
     source: input.source || (input.format === COMBINED_FORMAT ? "combined-json" : "json"),
-    map_blob_b64: mapBlob,
-    map_plist_b64: typeof input.map_plist_b64 === "string" ? input.map_plist_b64 : undefined,
     map_encrypted: typeof input.map_encrypted === "boolean" ? input.map_encrypted : undefined,
+    map_hidden: mapHidden,
     objects,
   };
 }
@@ -530,11 +540,11 @@ function stat(label, value) {
 
 function renderMapStats() {
   const objects = mapData.objects || [];
-  const mapBytes = mapData.map_blob_b64 ? byteLengthFromBase64(mapData.map_blob_b64) : 0;
+  const hiddenEntries = mapData.map_hidden?.root_entries?.length || 0;
   els.mapStatsGrid.innerHTML = "";
   [
     ["对象数", formatNumber(objects.length)],
-    ["地图 blob", mapData.map_blob_b64 === null ? "空" : mapData.map_blob_b64 ? `${formatNumber(mapBytes)} B` : "缺失"],
+    ["保留字段", `${formatNumber(hiddenEntries)} 根字段`],
     ["来源", mapData.source || "-"],
     ["文件", mapFileName],
   ].forEach(([label, value]) => els.mapStatsGrid.appendChild(stat(label, value)));
@@ -1013,9 +1023,6 @@ function validatePlayer() {
 function validateMap() {
   const errors = [];
   const warnings = [];
-  if (mapData.map_blob_b64 !== undefined && mapData.map_blob_b64 !== null && typeof mapData.map_blob_b64 !== "string") {
-    errors.push("map_blob_b64 只能是 null、缺失或 base64 字符串。");
-  }
   if (!Array.isArray(mapData.objects)) errors.push("objects 必须是数组。");
   if ((mapData.objects || []).length > 10000) warnings.push("objects 超过建议上限 10000 行。");
   (mapData.objects || []).forEach((obj, index) => {
@@ -1049,12 +1056,11 @@ function renderValidation() {
 function renderSummary() {
   const ui = playerData.user_info || {};
   const objects = mapData.objects || [];
-  const mapBytes = mapData.map_blob_b64 ? byteLengthFromBase64(mapData.map_blob_b64) : 0;
   els.fileName.textContent = activeTab === "player" ? playerFileName : mapFileName;
   els.saveTitle.textContent = activeTab === "player" ? `${ui.name || "未命名"} (${playerData.user_id ?? "-"})` : `地图对象 ${objects.length}`;
   els.saveMeta.textContent = activeTab === "player"
     ? `Lv.${ui.cur_level ?? "-"} · 摩尔豆 ${formatNumber(ui.gold)} · 贝壳 ${formatNumber(ui.vip_gold)}`
-    : `地图 ${mapData.map_blob_b64 === null ? "空" : formatNumber(mapBytes) + " B"} · ${objects.length} 对象`;
+    : `地图 objects · ${objects.length} 对象`;
 }
 
 function renderAll({ includePlayerJson = true, includeMapJson = true } = {}) {
@@ -1437,9 +1443,8 @@ async function loadMapBase64() {
     const result = await window.MoleDat.decodeMapBase64(value);
     mapData = normalizeMapData({
       source: "pasted-map-base64",
-      map_blob_b64: result.map_blob_b64,
-      map_plist_b64: result.map_plist_b64,
       map_encrypted: result.encrypted,
+      map_hidden: result.map_hidden,
       objects: result.objects,
     });
     clearMapSelection();
@@ -1547,7 +1552,6 @@ function loadSample() {
   });
   mapData = normalizeMapData({
     source: "sample",
-    map_blob_b64: null,
     objects: [
       { scene_id: 1, obj_kind: 0, key_id: 1, obj_id: 4001, seq_id: 1, enc_mapdata_b64: writeEncMapdata(13, 5, true) },
       { scene_id: 1, obj_kind: 0, key_id: 2, obj_id: 5001, seq_id: 2, enc_mapdata_b64: writeEncMapdata(9, 18, false) },
