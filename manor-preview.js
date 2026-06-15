@@ -231,6 +231,25 @@
     return byId;
   }
 
+  function framePreference(frame) {
+    const sourceSize = frame?.source_size || {};
+    const rect = frame?.rect || {};
+    const area = Math.max(0, num(sourceSize.w, rect.w || 0)) * Math.max(0, num(sourceSize.h, rect.h || 0));
+    const texture = text(frame?.texture).toLowerCase();
+    const deviceBias = texture.includes("ipad") ? 1_000_000_000 : texture.includes("iphone") ? -1_000_000_000 : 0;
+    return deviceBias + area;
+  }
+
+  function buildFrameMap(frames) {
+    const byName = new Map();
+    for (const frame of frames) {
+      const name = text(frame.frame_name);
+      const current = byName.get(name);
+      if (!current || framePreference(frame) > framePreference(current)) byName.set(name, frame);
+    }
+    return byName;
+  }
+
   async function buildAssetIndex() {
     const [catalog, frames, aspriteFrames, backgroundRows] = await Promise.all([
       fetchJson(`${ASSET_ROOT}object-catalog.json`),
@@ -239,7 +258,7 @@
       fetchJson(`${ASSET_ROOT}tables/Background.json`),
     ]);
     state.objectInfo = mergeCatalog(catalog);
-    state.frameByName = new Map(frames.map((frame) => [frame.frame_name, frame]));
+    state.frameByName = buildFrameMap(frames);
     state.aspriteByTexture = buildAspriteIndex(aspriteFrames);
 
     for (const info of state.objectInfo.values()) {
@@ -499,12 +518,14 @@
     const lengthY = Math.max(1, num(raw.length_y, 1));
     const size = lengthX + lengthY;
     if (size < 1) return { x: 0.5, y: 0 };
-    if ((restPlace === "4" || (!restPlace && type === "4")) && asset) {
+    const usesRoadAnchor = restPlace === "4" || (!restPlace && type === "4");
+    if (usesRoadAnchor && asset?.aspritePreview) {
       const offset = ((lengthX - lengthY) * TILE_WIDTH * 0.5) / Math.max(1, asset.width);
-      const baseX = flip ? 1 - offset : offset;
+      const baseX = flip ? -offset : offset;
       const baseY = 1 - ((lengthX + lengthY) * TILE_HEIGHT * 0.5) / Math.max(1, asset.height);
       return { x: baseX, y: baseY };
     }
+    if (usesRoadAnchor && asset) return { x: 0.5, y: 0.5 };
     if (asset?.origin && asset.width > 0 && asset.height > 0) {
       return {
         x: num(asset.origin.x, asset.width * 0.5) / asset.width,
