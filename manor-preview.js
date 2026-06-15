@@ -312,6 +312,8 @@
     const frames = Array.isArray(asprite?.frames) ? asprite.frames.filter((frame) => frame?.rect?.w > 0 && frame?.rect?.h > 0) : [];
     if (!frames.length) return null;
     const byIndex = new Map(frames.map((frame) => [num(frame.index, -1), frame]));
+    const modulesByIndex = new Map((Array.isArray(asprite.modules) ? asprite.modules : []).map((item) => [num(item.index, -1), item]));
+    const fmodules = Array.isArray(asprite.fmodules) ? asprite.fmodules : [];
     const animations = Array.isArray(asprite.animations) ? asprite.animations : [];
     const aframes = Array.isArray(asprite.aframes) ? asprite.aframes : [];
     const animation = animations.find((item) => num(item.aframe_count, 0) > 0) || null;
@@ -353,20 +355,47 @@
     }
     if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return null;
 
+    const compositeParts = (item) => {
+      const frame = item.frame;
+      const count = num(frame.module_count, 0);
+      const start = num(frame.fmodule_start, 0);
+      const parts = [];
+      for (let i = 0; i < count; i += 1) {
+        const fmodule = fmodules[start + i];
+        const module = fmodule ? modulesByIndex.get(num(fmodule.module, -1) & 0xff) : null;
+        if (!module || num(module.w, 0) <= 0 || num(module.h, 0) <= 0) continue;
+        parts.push({
+          trim: {
+            x: num(item.ox, 0) + num(fmodule.ox, 0) - minX,
+            y: num(item.oy, 0) + num(fmodule.oy, 0) - minY,
+            width: num(module.w, 0),
+            height: num(module.h, 0),
+          },
+          frame: {
+            rect: { x: num(module.x, 0), y: num(module.y, 0), w: num(module.w, 0), h: num(module.h, 0) },
+            rotated: false,
+            frame_name: `${asprite.name || "asprite"}#module${module.index ?? i}`,
+          },
+        });
+      }
+      return parts;
+    };
+
     let at = 0;
     const sequence = timedFrames.map((item) => {
       const rect = item.frame.rect;
       const bounds = item.frame.bounds || { x: 0, y: 0, w: rect.w, h: rect.h };
       const x = num(item.ox, 0) + num(bounds.x, 0);
       const y = num(item.oy, 0) + num(bounds.y, 0);
+      const parts = compositeParts(item);
       const out = {
         at,
         duration: item.duration,
         trim: {
-          x: x - minX,
-          y: y - minY,
-          width: num(rect.w, 0),
-          height: num(rect.h, 0),
+          x: parts.length ? 0 : x - minX,
+          y: parts.length ? 0 : y - minY,
+          width: parts.length ? maxX - minX : num(rect.w, 0),
+          height: parts.length ? maxY - minY : num(rect.h, 0),
         },
         frame: {
           rect: { x: num(rect.x, 0), y: num(rect.y, 0), w: num(rect.w, 0), h: num(rect.h, 0) },
@@ -374,6 +403,7 @@
           frame_name: `${asprite.name || "asprite"}#frame${item.frame.index ?? 0}`,
         },
       };
+      if (parts.length) out.parts = parts;
       at += item.duration;
       return out;
     });
@@ -838,22 +868,35 @@
     return current;
   }
 
-  function spriteVertices(sprite, texture, options = {}) {
-    const drawState = currentAssetDraw(sprite.asset);
-    const trim = drawState.trim || sprite.asset.trim || { x: 0, y: 0, width: sprite.width, height: sprite.height };
-    const expand = Math.max(0, num(options.expand, 0));
-    const x0 = sprite.x + trim.x - expand;
-    const y0 = sprite.y + trim.y - expand;
-    const x1 = sprite.x + trim.x + trim.width + expand;
-    const y1 = sprite.y + trim.y + trim.height + expand;
+  function pushSpritePartVertices(out, sprite, texture, part, color, expand) {
+    const trim = part.trim || { x: 0, y: 0, width: sprite.width, height: sprite.height };
+    const partWidth = num(trim.width, sprite.width);
+    const partX = num(trim.x, 0);
+    const x0 = sprite.x + (sprite.flip ? sprite.width - partX - partWidth : partX) - expand;
+    const y0 = sprite.y + num(trim.y, 0) - expand;
+    const x1 = x0 + partWidth + expand * 2;
+    const y1 = y0 + num(trim.height, sprite.height) + expand * 2;
     const corners = sprite.flip
       ? [[x1, y0], [x0, y0], [x0, y1], [x1, y1]]
       : [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-    const uvs = uvCorners(sprite.asset, texture, drawState);
-    const color = options.color || [1, 1, 1, 1];
-    const out = [];
+    const uvs = uvCorners(sprite.asset, texture, part);
     for (const index of [0, 1, 2, 0, 2, 3]) {
       pushVertex(out, corners[index][0], corners[index][1], uvs[index][0], uvs[index][1], color);
+    }
+  }
+
+  function spriteVertices(sprite, texture, options = {}) {
+    const drawState = currentAssetDraw(sprite.asset);
+    const expand = Math.max(0, num(options.expand, 0));
+    const color = options.color || [1, 1, 1, 1];
+    const out = [];
+    if (Array.isArray(drawState.parts) && drawState.parts.length) {
+      for (const part of drawState.parts) pushSpritePartVertices(out, sprite, texture, part, color, expand);
+    } else {
+      pushSpritePartVertices(out, sprite, texture, {
+        frame: drawState.frame,
+        trim: drawState.trim || sprite.asset.trim || { x: 0, y: 0, width: sprite.width, height: sprite.height },
+      }, color, expand);
     }
     return out;
   }
@@ -1040,7 +1083,7 @@
         try {
           const texture = await textureFor(sprite.asset.src);
           const data = spriteVertices(sprite, texture);
-          drawBuffer(state.programs.texture, state.buffers.texture, data, gl.TRIANGLES, 6, texture.texture);
+          drawBuffer(state.programs.texture, state.buffers.texture, data, gl.TRIANGLES, data.length / 8, texture.texture);
         } catch {
           sprite.missing = true;
         }
@@ -1072,7 +1115,7 @@
         try {
           const texture = await textureFor(sprite.asset.src);
           const data = spriteVertices(sprite, texture);
-          drawBuffer(state.programs.texture, state.buffers.texture, data, gl.TRIANGLES, 6, texture.texture);
+          drawBuffer(state.programs.texture, state.buffers.texture, data, gl.TRIANGLES, data.length / 8, texture.texture);
           continue;
         } catch {
           sprite.missing = true;
@@ -1088,7 +1131,7 @@
         try {
           const texture = await textureFor(ghostSprite.asset.src);
           const data = spriteVertices(ghostSprite, texture, { color: [1, 1, 1, 0.58] });
-          drawBuffer(state.programs.texture, state.buffers.texture, data, gl.TRIANGLES, 6, texture.texture);
+          drawBuffer(state.programs.texture, state.buffers.texture, data, gl.TRIANGLES, data.length / 8, texture.texture);
         } catch {
           ghostSprite.missing = true;
         }
@@ -1232,7 +1275,7 @@
       try {
         const texture = await textureFor(button.asset.src);
         const data = uiButtonVertices(button, texture);
-        drawBuffer(state.programs.texture, state.buffers.texture, data, state.gl.TRIANGLES, 6, texture.texture);
+        drawBuffer(state.programs.texture, state.buffers.texture, data, state.gl.TRIANGLES, data.length / 8, texture.texture);
       } catch {
         // Missing UI art should not break map rendering.
       }
