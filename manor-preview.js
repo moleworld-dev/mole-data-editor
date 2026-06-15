@@ -492,23 +492,24 @@
   }
 
   function anchorFor(info, flip, asset) {
+    const raw = info?.raw || {};
+    const restPlace = text(raw.rest_place);
+    const type = text(raw.type);
+    const lengthX = Math.max(1, num(raw.length_x, 1));
+    const lengthY = Math.max(1, num(raw.length_y, 1));
+    const size = lengthX + lengthY;
+    if (size < 1) return { x: 0.5, y: 0 };
+    if ((restPlace === "4" || (!restPlace && type === "4")) && asset) {
+      const offset = ((lengthX - lengthY) * TILE_WIDTH * 0.5) / Math.max(1, asset.width);
+      const baseX = flip ? 1 - offset : offset;
+      const baseY = 1 - ((lengthX + lengthY) * TILE_HEIGHT * 0.5) / Math.max(1, asset.height);
+      return { x: baseX, y: baseY };
+    }
     if (asset?.origin && asset.width > 0 && asset.height > 0) {
       return {
         x: num(asset.origin.x, asset.width * 0.5) / asset.width,
         y: 1 - num(asset.origin.y, asset.height) / asset.height,
       };
-    }
-    const raw = info?.raw || {};
-    const restPlace = text(raw.rest_place);
-    const lengthX = Math.max(1, num(raw.length_x, 1));
-    const lengthY = Math.max(1, num(raw.length_y, 1));
-    const size = lengthX + lengthY;
-    if (size < 1) return { x: 0.5, y: 0 };
-    if (restPlace === "4" && asset) {
-      const offset = ((lengthX - lengthY) * TILE_WIDTH * 0.5) / Math.max(1, asset.width);
-      const baseX = 0.5 + (flip ? -offset : offset);
-      const baseY = 1 - ((lengthX + lengthY) * TILE_HEIGHT * 0.5) / Math.max(1, asset.height);
-      return { x: baseX, y: Math.max(0, Math.min(1, baseY)) };
     }
     const baseX = lengthX / size;
     return { x: flip ? 1 - baseX : baseX, y: 0 };
@@ -846,23 +847,27 @@
     return SELECTED_GLOW_PASSES.flatMap((pass) => spriteVertices(sprite, texture, pass));
   }
 
-  function footprintVertices(sprite, colorOverride = null) {
+  function footprintSize(sprite) {
+    return sprite.flip
+      ? { width: sprite.lengthX, height: sprite.lengthY }
+      : { width: sprite.lengthY, height: sprite.lengthX };
+  }
+
+  function footprintPoints(sprite) {
     const p = sprite.base;
-    const w = Math.max(TILE_WIDTH, (sprite.lengthX + sprite.lengthY) * HALF_TILE_WIDTH);
-    const h = Math.max(TILE_HEIGHT, (sprite.lengthX + sprite.lengthY) * HALF_TILE_HEIGHT);
-    const x0 = p.x - w * 0.5;
-    const x1 = p.x + w * 0.5;
-    const y0 = p.y - h;
-    const yMid = p.y - h * 0.5;
-    const y1 = p.y;
+    const size = footprintSize(sprite);
+    return [
+      [p.x, p.y],
+      [p.x - HALF_TILE_WIDTH * size.height, p.y - HALF_TILE_HEIGHT * size.height],
+      [p.x + HALF_TILE_WIDTH * (size.width - size.height), p.y - HALF_TILE_HEIGHT * (size.width + size.height)],
+      [p.x + HALF_TILE_WIDTH * size.width, p.y - HALF_TILE_HEIGHT * size.width],
+    ];
+  }
+
+  function footprintVertices(sprite, colorOverride = null) {
     const color = colorOverride || (sprite.missing ? [0.72, 0.22, 0.16, 0.5] : [0.12, 0.48, 0.41, 0.35]);
     const out = [];
-    const points = [
-      [p.x, y0],
-      [x1, yMid],
-      [p.x, y1],
-      [x0, yMid],
-    ];
+    const points = footprintPoints(sprite);
     for (const index of [0, 1, 2, 0, 2, 3]) {
       pushVertex(out, points[index][0], points[index][1], 0, 0, color);
     }
@@ -870,24 +875,8 @@
   }
 
   function footprintOutlineVertices(sprite, color) {
-    const p = sprite.base;
-    const w = Math.max(TILE_WIDTH, (sprite.lengthX + sprite.lengthY) * HALF_TILE_WIDTH);
-    const h = Math.max(TILE_HEIGHT, (sprite.lengthX + sprite.lengthY) * HALF_TILE_HEIGHT);
-    const x0 = p.x - w * 0.5;
-    const x1 = p.x + w * 0.5;
-    const y0 = p.y - h;
-    const yMid = p.y - h * 0.5;
-    const y1 = p.y;
-    const points = [
-      [p.x, y0],
-      [x1, yMid],
-      [x1, yMid],
-      [p.x, y1],
-      [p.x, y1],
-      [x0, yMid],
-      [x0, yMid],
-      [p.x, y0],
-    ];
+    const corners = footprintPoints(sprite);
+    const points = [corners[0], corners[1], corners[1], corners[2], corners[2], corners[3], corners[3], corners[0]];
     const out = [];
     for (const point of points) pushVertex(out, point[0], point[1], 0, 0, color);
     return out;
