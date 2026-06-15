@@ -42,6 +42,10 @@
   const PROPERTY_TABLES = new Set(["property", "propertyHV"]);
   const NAME_TABLES = new Set(["zh-Hans.lproj_property_description", "zh-Hans.lproj_property_descriptionHV"]);
   const SKIPPED_BACKGROUND_IMAGES = new Set(["", "flower", "tree8"]);
+  const ASPRITE_OBJECT_OVERRIDES = new Map([
+    ["14274", { texture: "textures/png/lion_aspriteiPad.png", animationIndex: 0 }],
+    ["16413", { texture: "textures/png/share_02_scene_aspriteiPad.png", animationIndex: 14 }],
+  ]);
   const ASPRITE_TIME_UNIT_MS = 50;
   const ANIMATION_REDRAW_MS = 80;
 
@@ -308,7 +312,7 @@
     return byTexture;
   }
 
-  function aspriteFrameSequence(asprite) {
+  function aspriteFrameSequence(asprite, animationIndex = null) {
     const frames = Array.isArray(asprite?.frames) ? asprite.frames.filter((frame) => frame?.rect?.w > 0 && frame?.rect?.h > 0) : [];
     if (!frames.length) return null;
     const byIndex = new Map(frames.map((frame) => [num(frame.index, -1), frame]));
@@ -316,7 +320,12 @@
     const fmodules = Array.isArray(asprite.fmodules) ? asprite.fmodules : [];
     const animations = Array.isArray(asprite.animations) ? asprite.animations : [];
     const aframes = Array.isArray(asprite.aframes) ? asprite.aframes : [];
-    const animation = animations.find((item) => num(item.aframe_count, 0) > 0) || null;
+    const selectedAnimationIndex = animationIndex == null ? null : num(animationIndex, -1);
+    const animation = (selectedAnimationIndex >= 0
+      ? animations.find((item) => num(item.index, -1) === selectedAnimationIndex)
+      : null)
+      || animations.find((item) => num(item.aframe_count, 0) > 0)
+      || null;
     const timedFrames = [];
 
     if (animation && aframes.length) {
@@ -420,6 +429,26 @@
     };
   }
 
+  function aspriteAssetFromTexture(texturePng, animationIndex = null) {
+    const key = text(texturePng).replace(/\\/g, "/");
+    const asprite = key ? state.aspriteByTexture.get(key) : null;
+    const animation = aspriteFrameSequence(asprite, animationIndex);
+    const first = animation?.frames?.[0];
+    const rect = first?.frame?.rect;
+    if (!animation || !first || !rect) return null;
+    return {
+      kind: "atlas",
+      src: `${ASSET_ROOT}${key}`,
+      width: animation.width,
+      height: animation.height,
+      trim: first.trim,
+      frame: first.frame,
+      animation,
+      origin: animation.origin,
+      aspritePreview: true,
+    };
+  }
+
   function assetFromFrame(frame) {
     if (!frame) return null;
     const colorRect = parseRectText(frame.raw?.sourceColorRect);
@@ -437,22 +466,12 @@
 
   function aspritePreviewAsset(info) {
     const key = aspriteTextureKey(info?.texture);
-    const asprite = key ? state.aspriteByTexture.get(key) : null;
-    const animation = aspriteFrameSequence(asprite);
-    const first = animation?.frames?.[0];
-    const rect = first?.frame?.rect;
-    if (!animation || !first || !rect) return null;
-    return {
-      kind: "atlas",
-      src: `${ASSET_ROOT}${key}`,
-      width: animation.width,
-      height: animation.height,
-      trim: first.trim,
-      frame: first.frame,
-      animation,
-      origin: animation.origin,
-      aspritePreview: true,
-    };
+    return key ? aspriteAssetFromTexture(key) : null;
+  }
+
+  function aspriteOverrideAsset(info) {
+    const override = ASPRITE_OBJECT_OVERRIDES.get(text(info?.id).trim());
+    return override ? aspriteAssetFromTexture(override.texture, override.animationIndex) : null;
   }
 
   function frameAsset(info) {
@@ -482,7 +501,7 @@
   }
 
   function assetForObject(info) {
-    return aspritePreviewAsset(info) || standaloneAsset(info) || frameAsset(info);
+    return aspriteOverrideAsset(info) || aspritePreviewAsset(info) || standaloneAsset(info) || frameAsset(info);
   }
 
   function buildBackgroundSprites(rows) {

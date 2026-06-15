@@ -826,12 +826,41 @@ function pickerAssetUvs(asset, texture) {
   return [[x1, y0], [x1, y1], [x0, y1], [x0, y0]];
 }
 
+function pickerAssetDraw(asset) {
+  const firstFrame = asset?.animation?.frames?.[0];
+  return firstFrame || { frame: asset?.frame || null, trim: asset?.trim || null };
+}
+
 function pickerAssetSize(asset, texture) {
+  if (asset?.animation?.width > 0 && asset?.animation?.height > 0) {
+    return { width: asset.animation.width, height: asset.animation.height };
+  }
   if (!asset?.frame?.rect) return { width: texture.width, height: texture.height };
   const rect = asset.frame.rect;
   return asset.frame.rotated
     ? { width: Math.max(1, rect.h), height: Math.max(1, rect.w) }
     : { width: Math.max(1, rect.w), height: Math.max(1, rect.h) };
+}
+
+function drawPickerAsset(asset, texture, x, y, scale) {
+  const drawState = pickerAssetDraw(asset);
+  const parts = Array.isArray(drawState.parts) && drawState.parts.length
+    ? drawState.parts
+    : [{ frame: drawState.frame, trim: drawState.trim || asset.trim }];
+  for (const part of parts) {
+    const trim = part.trim || { x: 0, y: 0, width: asset.width || texture.width, height: asset.height || texture.height };
+    const partW = Math.max(1, numberOrZero(trim.width) * scale);
+    const partH = Math.max(1, numberOrZero(trim.height) * scale);
+    drawPickerQuad(
+      texture.texture,
+      x + numberOrZero(trim.x) * scale,
+      y + numberOrZero(trim.y) * scale,
+      partW,
+      partH,
+      [1, 1, 1, 1],
+      pickerAssetUvs({ ...asset, frame: part.frame }, texture),
+    );
+  }
 }
 
 function drawObjectPicker() {
@@ -882,14 +911,12 @@ function drawObjectPicker() {
         const scale = Math.min(1, imageW / source.width, imageH / source.height);
         const drawW = Math.max(1, source.width * scale);
         const drawH = Math.max(1, source.height * scale);
-        drawPickerQuad(
-          texture.texture,
+        drawPickerAsset(
+          asset,
+          texture,
           imageX + (imageW - drawW) / 2,
           imageY + (imageH - drawH) / 2,
-          drawW,
-          drawH,
-          [1, 1, 1, 1],
-          pickerAssetUvs(asset, texture),
+          scale,
         );
       } else if (!asset) {
         const noImage = pickerTextTexture("无图", imageW);
